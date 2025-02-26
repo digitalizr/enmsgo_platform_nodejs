@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: node_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      DB_USER: enmsgo_admin
+      DB_PASSWORD: Letmein1234
+      DB_HOST: ec2-52-221-226-242.ap-southeast-1.compute.amazonaws.com
+      DB_PORT: 5432
+      DB_NAME: enmsgo_db
