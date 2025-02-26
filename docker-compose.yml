@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    build: .
+    image: digitalizr/node_backend:latest
     container_name: node_backend
     restart: always
     ports:
