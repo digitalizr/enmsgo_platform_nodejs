@@ -59,30 +59,30 @@ Run the application:
 
 # User Routes (/api/users)
 
-Method	  Endpoint	           Description
-POST	  /api/users	       Add a new user
-GET	      /api/users	       Get all users
-GET	      /api/users/:id	   Get a single user by ID
-PUT	      /api/users/:id	   Update a user by ID
-DELETE	  /api/users/:id	   Delete a user by ID
+Method	 =>    Endpoint	  =>      Description
+POST	=>      /api/users	 =>      Add a new user
+GET	 =>      /api/users	  =>     Get all users
+GET	 =>      /api/users/:id	=>   Get a single user by ID
+PUT	 =>      /api/users/:id	=>   Update a user by ID
+DELETE	=>    /api/users/:id	 =>  Delete a user by ID
 
 
 # Company Routes (/api/companies)
 
 
-Method	      Endpoint	                Description
-POST	      /api/companies/register	Register a new company
-GET	          /api/companies	        Get all companies
-GET	          /api/companies/:id	    Get a company by ID
-PUT	          /api/companies/:id	    Update a company by ID
-DELETE	      /api/companies/:id	    Delete a company by ID
+Method	 =>         Endpoint	     =>               Description
+POST =>	           /api/companies/register=>      Register a new company
+GET	 =>            /api/companies	        =>      Get all companies
+GET	 =>            /api/companies/:id	    =>      Get a company by ID
+PUT	 =>            /api/companies/:id	    =>      Update a company by ID
+DELETE	=>          /api/companies/:id	    =>      Delete a company by ID
 
 
 # Smart Meter Routes (/api/smart-meters)
 
-Method	            Endpoint	                Description
-POST	            /api/smart-meters	        Add a new smart meter
-GET	                /api/smart-meters	        Get all smart meters
-GET	                /api/smart-meters/:id	    Get a smart meter by ID
-PUT	                /api/smart-meters/:id	    Update a smart meter by ID
-DELETE	            /api/smart-meters/:id	    Delete a smart meter by ID
+Method	=>             Endpoint	   =>                 Description
+POST	  =>             /api/smart-meters	       =>    Add a new smart meter
+GET	   =>             /api/smart-meters	       =>    Get all smart meters
+GET	   =>             /api/smart-meters/:id	   =>    Get a smart meter by ID
+PUT	   =>             /api/smart-meters/:id	   =>    Update a smart meter by ID
+DELETE	=>             /api/smart-meters/:id	   =>    Delete a smart meter by ID
