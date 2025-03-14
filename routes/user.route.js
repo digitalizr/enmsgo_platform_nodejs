@@ -24,3 +24,15 @@ router.put("/:id", updateUser);
 router.delete("/:id", deleteUser);
 
 module.exports = router;
+
+
+// {
+//   "email": "john.doe@example.com",
+//   "password": "securePassword123",
+//   "full_name": "John Doe",
+//   "role": "manager",
+//   "company_id": 1,
+//   "facility_id": 1,
+//   "department_id": 1,
+//   "status": "active"
+// }

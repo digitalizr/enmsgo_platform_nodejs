@@ -1,53 +1,69 @@
 const { client } = require("../lib/connectDB.js");
+const bcrypt = require("bcryptjs"); 
 
-// ✅ Add a new user 
+// User Controller
 const addUser = async (req, res) => {
-  const { name, email, phone, role, company_id } = req.body;
+  const {
+    email,
+    password_hash,
+    first_name,
+    last_name,
+    phone,
+  } = req.body;
 
-  if (!name || !email || !role || !company_id) {
-    return res.status(400).json({ message: "Name, email, role, and company_id are required" });
+  // Validate required fields
+  if (
+    !email ||
+    !password_hash ||
+    !first_name ||
+    !last_name ||
+    !phone 
+  ) {
+    return res.status(400).json({ message: "All fields are required" });
   }
 
-  // Validate role
-  const allowedRoles = ["operator", "manager", "admin"];
-  if (!allowedRoles.includes(role)) {
-    return res.status(400).json({ message: "Invalid role. Allowed values: operator, manager, admin" });
-  }
+  // Validate role and status
+  // if (!["manager", "operator"].includes(role)) {
+  //   return res.status(400).json({ message: "Invalid role" });
+  // }
+  // if (status && !["active", "inactive"].includes(status)) {
+  //   return res.status(400).json({ message: "Invalid status" });
+  // }
 
   try {
-    // Ensure the company exists before adding the user
-    const companyCheck = await client.query("SELECT id FROM companies WHERE id = $1", [company_id]);
-    if (companyCheck.rows.length === 0) {
-      return res.status(400).json({ message: "Invalid company_id. Company does not exist." });
-    }
+    // Hash the password
+    // const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new user
     const query = `
-      INSERT INTO users (name, email, phone, role, company_id, created_at)
+      INSERT INTO users (email, password_hash, first_name, last_name, phone, created_at)
       VALUES ($1, $2, $3, $4, $5, NOW())
-      RETURNING *;
+      RETURNING id, email, first_name,last_name,phone,created_at;
     `;
-    const values = [name, email, phone || null, role, company_id];
-
+    const values = [
+      email,
+      password_hash,
+      first_name,
+      last_name,
+      phone
+    ];
     const result = await client.query(query, values);
 
     res.status(201).json({ message: "User added", user: result.rows[0] });
   } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ message: "Email already exists" });
-    }
     console.error("Error adding user:", error);
+    if (error.code === "23505") {
+      // Unique constraint violation (email)
+      return res.status(400).json({ message: "Email already exists" });
+    }
     res.status(500).json({ message: "Internal server error" });
   }
 };
 
-// ✅ Get all users
 const getAllUsers = async (req, res) => {
   try {
     const query = `
-      SELECT users.*, companies.name AS company_name 
-      FROM users 
-      LEFT JOIN companies ON users.company_id = companies.id
+      SELECT id, email, full_name, role, company_id, facility_id, department_id, status, created_at
+      FROM users
       ORDER BY created_at DESC;
     `;
     const result = await client.query(query);
@@ -59,16 +75,14 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// ✅ Get a single user by ID
 const getSingleUser = async (req, res) => {
   const { id } = req.params;
 
   try {
     const query = `
-      SELECT users.*, companies.name AS company_name 
-      FROM users 
-      LEFT JOIN companies ON users.company_id = companies.id
-      WHERE users.id = $1;
+      SELECT id, email, full_name, role, company_id, facility_id, department_id, status, created_at
+      FROM users
+      WHERE id = $1;
     `;
     const result = await client.query(query, [id]);
 
@@ -83,7 +97,6 @@ const getSingleUser = async (req, res) => {
   }
 };
 
-// ✅ Update user details by ID (only update allowed fields)
 const updateUser = async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
@@ -92,26 +105,33 @@ const updateUser = async (req, res) => {
     return res.status(400).json({ message: "No fields to update" });
   }
 
+  // Validate role and status if provided
+  if (updates.role && !["manager", "operator"].includes(updates.role)) {
+    return res.status(400).json({ message: "Invalid role" });
+  }
+  if (updates.status && !["active", "inactive"].includes(updates.status)) {
+    return res.status(400).json({ message: "Invalid status" });
+  }
+
   try {
-    const allowedFields = ["name", "email", "phone", "role", "company_id"];
-    const queryParts = [];
+    let query = "UPDATE users SET ";
     const values = [];
     let index = 1;
 
+    // Handle password hashing if password is being updated
+    if (updates.password) {
+      updates.password = await bcrypt.hash(updates.password, 10);
+    }
+
     for (const key in updates) {
-      if (!allowedFields.includes(key)) {
-        return res.status(400).json({ message: `Invalid field: ${key}` });
-      }
-      queryParts.push(`${key} = $${index}`);
+      query += `${key} = $${index}, `;
       values.push(updates[key]);
       index++;
     }
 
-    const query = `
-      UPDATE users 
-      SET ${queryParts.join(", ")}
-      WHERE id = $${index} RETURNING *;
-    `;
+    query =
+      query.slice(0, -2) +
+      ` WHERE id = $${index} RETURNING id, email, full_name, role, company_id, facility_id, department_id, status, created_at;`;
     values.push(id);
 
     const result = await client.query(query, values);
@@ -122,20 +142,24 @@ const updateUser = async (req, res) => {
 
     res.status(200).json({ message: "User updated", user: result.rows[0] });
   } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ message: "Email already exists" });
-    }
     console.error("Error updating user:", error);
+    if (error.code === "23505") {
+      // Unique constraint violation (email)
+      return res.status(400).json({ message: "Email already exists" });
+    }
     res.status(500).json({ message: "Internal server error" });
   }
 };
 
-// ✅ Delete a user by ID
 const deleteUser = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const query = "DELETE FROM users WHERE id = $1 RETURNING *;";
+    const query = `
+      DELETE FROM users
+      WHERE id = $1
+      RETURNING id, email, full_name, role, company_id, facility_id, department_id, status, created_at;
+    `;
     const result = await client.query(query, [id]);
 
     if (result.rows.length === 0) {

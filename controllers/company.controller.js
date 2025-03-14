@@ -2,19 +2,53 @@ const { client } = require("../lib/connectDB.js");
 
 // Register a new company
 const registerCompany = async (req, res) => {
-  const { name, address, contact_person, contact_email, contact_phone, status } = req.body;
+  const { 
+    name, 
+    address, 
+    city, 
+    state, 
+    postal_code, 
+    country, 
+    contact_name, 
+    contact_email, 
+    contact_phone, 
+    status 
+  } = req.body;
 
-  if (!name || !address || !contact_person || !contact_email || !contact_phone) {
+  if (!name || !address || !city || !state || !postal_code || !country || !contact_name || !contact_email || !contact_phone) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
   try {
     const query = `
-      INSERT INTO companies (name, address, contact_person, contact_email, contact_phone, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      INSERT INTO companies (
+        name, 
+        address, 
+        city, 
+        state, 
+        postal_code, 
+        country, 
+        contact_name, 
+        contact_email, 
+        contact_phone, 
+        status, 
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
       RETURNING *;
     `;
-    const values = [name, address, contact_person, contact_email, contact_phone, status || "lead"];
+    const values = [
+      name, 
+      address, 
+      city, 
+      state, 
+      postal_code, 
+      country, 
+      contact_name, 
+      contact_email, 
+      contact_phone, 
+      status || "active"
+    ];
     const result = await client.query(query, values);
 
     res.status(201).json({ message: "Company registered", company: result.rows[0] });
@@ -29,7 +63,24 @@ const getCompanyById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const query = "SELECT * FROM companies WHERE id = $1;";
+    const query = `
+      SELECT 
+        id, 
+        name, 
+        address, 
+        city, 
+        state, 
+        postal_code, 
+        country, 
+        contact_name, 
+        contact_email, 
+        contact_phone, 
+        status, 
+        created_at, 
+        updated_at 
+      FROM companies 
+      WHERE id = $1;
+    `;
     const result = await client.query(query, [id]);
 
     if (result.rows.length === 0) {
@@ -46,7 +97,24 @@ const getCompanyById = async (req, res) => {
 // Get all companies
 const getAllCompanies = async (req, res) => {
   try {
-    const query = "SELECT * FROM companies ORDER BY created_at DESC;";
+    const query = `
+      SELECT 
+        id, 
+        name, 
+        address, 
+        city, 
+        state, 
+        postal_code, 
+        country, 
+        contact_name, 
+        contact_email, 
+        contact_phone, 
+        status, 
+        created_at, 
+        updated_at 
+      FROM companies 
+      ORDER BY created_at DESC;
+    `;
     const result = await client.query(query);
 
     res.status(200).json(result.rows);
@@ -76,7 +144,7 @@ const updateCompany = async (req, res) => {
       index++;
     }
 
-    query = query.slice(0, -2) + ` WHERE id = $${index} RETURNING *;`;
+    query = query.slice(0, -2) + `, updated_at = NOW() WHERE id = $${index} RETURNING *;`;
     values.push(id);
 
     const result = await client.query(query, values);
@@ -95,7 +163,6 @@ const updateCompany = async (req, res) => {
 // Delete a company by ID
 const deleteCompany = async (req, res) => {
   const { id } = req.params;
-
   try {
     const query = "DELETE FROM companies WHERE id = $1 RETURNING *;";
     const result = await client.query(query, [id]);
