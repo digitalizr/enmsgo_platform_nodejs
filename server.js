@@ -41,7 +41,6 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 })
-
 // Apply rate limiting to all routes
 app.use(apiLimiter)
 
@@ -74,71 +73,76 @@ app.get("/", (req, res) => {
 
 // Auth routes
 app.post("/api/auth/login", async (req, res) => {
-  try {
-    const { email, password } = req.body
+  const { email, password } = req.body
 
-    // Log the received input
-    console.log("Login attempt:", { email, password })
+  console.log("Login attempt:", { email, password })
 
-    // Validate input
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" })
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" })
+  }
+
+  const maxRetries = 3
+  let attempt = 0
+
+  while (attempt < maxRetries) {
+    try {
+      const userResult = await pool.query(
+        "SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.is_active, u.require_password_change, r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.email = $1",
+        [email],
+      )
+
+      if (userResult.rows.length === 0) {
+        return res.status(401).json({ message: "Invalid credentials" })
+      }
+
+      const user = userResult.rows[0]
+
+      if (!user.is_active) {
+        return res.status(401).json({ message: "Account is inactive" })
+      }
+
+      const validPassword = await bcrypt.compare(password, user.password_hash)
+      if (!validPassword) {
+        return res.status(401).json({ message: "Invalid credentials" })
+      }
+
+      const token = jwt.sign(
+        {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          firstName: user.first_name,
+          lastName: user.last_name,
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "8h" },
+      )
+
+      await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id])
+
+      return res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role,
+          requirePasswordChange: user.require_password_change,
+        },
+        token,
+      })
+    } catch (error) {
+      if (error.code === 'ECONNRESET') {
+        console.error("Database connection was reset. Retrying...")
+        attempt++
+        if (attempt >= maxRetries) {
+          return res.status(500).json({ message: "Server error during login after multiple attempts" })
+        }
+      } else {
+        console.error("Login error:", error)
+        return res.status(500).json({ message: "Server error during login" })
+      }
     }
-
-    // Find user
-    const userResult = await pool.query(
-      "SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.is_active, u.require_password_change, r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.email = $1",
-      [email],
-    )
-
-    if (userResult.rows.length === 0) {
-      return res.status(401).json({ message: "Invalid credentials" })
-    }
-
-    const user = userResult.rows[0]
-
-    // Check if user is active
-    if (!user.is_active) {
-      return res.status(401).json({ message: "Account is inactive" })
-    }
-
-    // Verify password
-    const validPassword = await bcrypt.compare(password, user.password_hash)
-    if (!validPassword) {
-      return res.status(401).json({ message: "Invalid credentials" })
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        firstName: user.first_name,
-        lastName: user.last_name,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "8h" },
-    )
-
-    // Update last login
-    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id])
-
-    // Return user info and token
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        role: user.role,
-        requirePasswordChange: user.require_password_change,
-      },
-      token,
-    })
-  } catch (error) {
-    console.error("Login error:", error)
-    res.status(500).json({ message: "Server error during login" })
   }
 })
 
@@ -146,19 +150,16 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { firstName, lastName, email, password, role = "customer" } = req.body
 
-    // Validate input
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ message: "All fields are required" })
     }
 
-    // Check if email already exists
     const existingUser = await pool.query("SELECT id FROM users WHERE email = $1", [email])
 
     if (existingUser.rows.length > 0) {
       return res.status(409).json({ message: "Email already in use" })
     }
 
-    // Get role ID
     const roleResult = await pool.query("SELECT id FROM roles WHERE name = $1", [role])
 
     if (roleResult.rows.length === 0) {
@@ -167,11 +168,9 @@ app.post("/api/auth/register", async (req, res) => {
 
     const roleId = roleResult.rows[0].id
 
-    // Hash password
     const salt = await bcrypt.genSalt(10)
     const passwordHash = await bcrypt.hash(password, salt)
 
-    // Create user
     const newUser = await pool.query(
       "INSERT INTO users (first_name, last_name, email, password_hash, role_id) VALUES ($1, $2, $3, $4, $5) RETURNING id",
       [firstName, lastName, email, passwordHash, roleId],
@@ -195,7 +194,6 @@ app.post("/api/auth/validate-token", async (req, res) => {
       return res.status(400).json({ message: "Token is required" })
     }
 
-    // Find user with this reset token
     const userResult = await pool.query(
       "SELECT id FROM users WHERE password_reset_token = $1 AND password_reset_expires > NOW()",
       [token],
@@ -220,7 +218,6 @@ app.post("/api/auth/set-password", async (req, res) => {
       return res.status(400).json({ message: "Token and password are required" })
     }
 
-    // Find user with this reset token
     const userResult = await pool.query(
       "SELECT id FROM users WHERE password_reset_token = $1 AND password_reset_expires > NOW()",
       [token],
@@ -232,11 +229,9 @@ app.post("/api/auth/set-password", async (req, res) => {
 
     const userId = userResult.rows[0].id
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10)
     const passwordHash = await bcrypt.hash(password, salt)
 
-    // Update user password
     await pool.query(
       "UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL, require_password_change = FALSE, updated_at = NOW() WHERE id = $2",
       [passwordHash, userId],
@@ -252,7 +247,6 @@ app.post("/api/auth/set-password", async (req, res) => {
 // User routes
 app.get("/api/users", authenticateToken, async (req, res) => {
   try {
-    // Check if user has permission
     if (!["admin", "operator"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" })
     }
@@ -311,7 +305,6 @@ app.get("/api/users", authenticateToken, async (req, res) => {
 
 app.post("/api/users", authenticateToken, async (req, res) => {
   try {
-    // Check if user has permission
     if (!["admin", "operator"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" })
     }
@@ -330,18 +323,15 @@ app.post("/api/users", authenticateToken, async (req, res) => {
       require_password_change = true,
     } = req.body
 
-    // Validate input
     if (!first_name || !last_name || !email || !role) {
       return res.status(400).json({ message: "Required fields missing" })
     }
 
-    // Start transaction
     const client = await pool.connect()
 
     try {
       await client.query("BEGIN")
 
-      // Get role ID
       const roleResult = await client.query("SELECT id FROM roles WHERE name = $1", [role])
 
       if (roleResult.rows.length === 0) {
@@ -350,14 +340,12 @@ app.post("/api/users", authenticateToken, async (req, res) => {
 
       const roleId = roleResult.rows[0].id
 
-      // Hash password if provided
       let passwordHash = null
       if (password) {
         const salt = await bcrypt.genSalt(10)
         passwordHash = await bcrypt.hash(password, salt)
       }
 
-      // Create user
       const newUserResult = await client.query(
         `INSERT INTO users (
           first_name, last_name, email, phone, password_hash, 
@@ -380,7 +368,6 @@ app.post("/api/users", authenticateToken, async (req, res) => {
 
       const userId = newUserResult.rows[0].id
 
-      // If company is provided, create user-company relationship
       if (company_id) {
         await client.query(
           `INSERT INTO user_companies (
@@ -411,25 +398,21 @@ app.post("/api/users", authenticateToken, async (req, res) => {
 
 app.post("/api/users/:id/reset-password", authenticateToken, async (req, res) => {
   try {
-    // Check if user has permission
     if (!["admin", "operator"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" })
     }
 
     const { id } = req.params
 
-    // Generate reset token
     const resetToken = uuidv4()
     const resetExpires = new Date()
-    resetExpires.setHours(resetExpires.getHours() + 24) // 24 hour expiration
+    resetExpires.setHours(resetExpires.getHours() + 24)
 
-    // Update user with reset token
     await pool.query(
       "UPDATE users SET password_reset_token = $1, password_reset_expires = $2, updated_at = NOW() WHERE id = $3",
       [resetToken, resetExpires, id],
     )
 
-    // Get user email
     const userResult = await pool.query("SELECT email FROM users WHERE id = $1", [id])
 
     if (userResult.rows.length === 0) {
@@ -437,17 +420,12 @@ app.post("/api/users/:id/reset-password", authenticateToken, async (req, res) =>
     }
 
     const userEmail = userResult.rows[0].email
-
-    // In a real application, send email with reset link
-    // For now, just return the token in the response
     const resetLink = `${process.env.FRONTEND_URL}/set-password?token=${resetToken}`
 
-    // TODO: Send email with reset link
     console.log(`Password reset link for ${userEmail}: ${resetLink}`)
 
     res.json({
       message: "Password reset email sent",
-      // Only include token in development
       ...(process.env.NODE_ENV !== "production" && { resetLink }),
     })
   } catch (error) {
@@ -458,7 +436,6 @@ app.post("/api/users/:id/reset-password", authenticateToken, async (req, res) =>
 
 app.post("/api/users/:id/manual-reset", authenticateToken, async (req, res) => {
   try {
-    // Check if user has permission
     if (!["admin", "operator"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" })
     }
@@ -470,11 +447,9 @@ app.post("/api/users/:id/manual-reset", authenticateToken, async (req, res) => {
       return res.status(400).json({ message: "Password is required" })
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10)
     const passwordHash = await bcrypt.hash(password, salt)
 
-    // Update user password
     await pool.query(
       "UPDATE users SET password_hash = $1, require_password_change = TRUE, updated_at = NOW(), updated_by = $2 WHERE id = $3",
       [passwordHash, req.user.id, id],
@@ -526,12 +501,10 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
       paramCount++
     }
 
-    // Count total
     const countQuery = `SELECT COUNT(*) FROM (${query}) as count_query`
     const countResult = await pool.query(countQuery, queryParams)
     const total = Number.parseInt(countResult.rows[0].count)
 
-    // Add pagination
     query += ` ORDER BY sm.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`
     queryParams.push(limit, offset)
 
@@ -568,7 +541,11 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
   }
 })
 
-// Companies routes
+// -------------------------------
+// Companies & Related Entities Routes
+// -------------------------------
+
+// GET companies (existing endpoint)
 app.get("/api/companies", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -581,7 +558,6 @@ app.get("/api/companies", authenticateToken, async (req, res) => {
       FROM companies c
       ORDER BY c.name
     `)
-
     res.json({ data: result.rows })
   } catch (error) {
     console.error("Error fetching companies:", error)
@@ -589,20 +565,88 @@ app.get("/api/companies", authenticateToken, async (req, res) => {
   }
 })
 
+// NEW ENDPOINT: Create a new company
+app.post("/api/companies", authenticateToken, async (req, res) => {
+  try {
+    const { name, address, contact_name, contact_email, contact_phone, status, notes } = req.body
+
+    if (!name || !contact_name || !contact_email) {
+      return res.status(400).json({ message: "Name, contact name, and contact email are required" })
+    }
+
+    const result = await pool.query(
+      `INSERT INTO companies (name, address, contact_name, contact_email, contact_phone, status, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [name, address, contact_name, contact_email, contact_phone, status || "lead", notes || null]
+    )
+
+    res.status(201).json({ data: result.rows[0] })
+  } catch (error) {
+    console.error("Error creating company:", error)
+    res.status(500).json({ message: "Server error while creating company" })
+  }
+})
+
+// NEW ENDPOINT: Create a new facility for a company
+app.post("/api/companies/:companyId/facilities", authenticateToken, async (req, res) => {
+  try {
+    const { companyId } = req.params
+    const { name, location, address, contact_name, contact_email, contact_phone, notes } = req.body
+
+    if (!name) {
+      return res.status(400).json({ message: "Facility name is required" })
+    }
+
+    const result = await pool.query(
+      `INSERT INTO facilities (company_id, name, location, address, contact_name, contact_email, contact_phone, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [companyId, name, location, address, contact_name, contact_email, contact_phone, notes || null]
+    )
+
+    res.status(201).json({ data: result.rows[0] })
+  } catch (error) {
+    console.error("Error creating facility:", error)
+    res.status(500).json({ message: "Server error while creating facility" })
+  }
+})
+
+// NEW ENDPOINT: Create a new department for a facility
+app.post("/api/facilities/:facilityId/departments", authenticateToken, async (req, res) => {
+  try {
+    const { facilityId } = req.params
+    const { name, notes } = req.body
+
+    if (!name) {
+      return res.status(400).json({ message: "Department name is required" })
+    }
+
+    const result = await pool.query(
+      `INSERT INTO departments (facility_id, name, notes)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [facilityId, name, notes || null]
+    )
+
+    res.status(201).json({ data: result.rows[0] })
+  } catch (error) {
+    console.error("Error creating department:", error)
+    res.status(500).json({ message: "Server error while creating department" })
+  }
+})
+
+// Facilities & Departments read routes
 app.get("/api/companies/:id/facilities", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-
     const result = await pool.query(
-      `
-      SELECT id, name, location, address, contact_name, contact_email, contact_phone, notes
-      FROM facilities
-      WHERE company_id = $1
-      ORDER BY name
-    `,
+      `SELECT id, name, location, address, contact_name, contact_email, contact_phone, notes
+       FROM facilities
+       WHERE company_id = $1
+       ORDER BY name`,
       [id],
     )
-
     res.json({ data: result.rows })
   } catch (error) {
     console.error("Error fetching facilities:", error)
@@ -613,86 +657,19 @@ app.get("/api/companies/:id/facilities", authenticateToken, async (req, res) => 
 app.get("/api/facilities/:id/departments", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-
     const result = await pool.query(
-      `
-      SELECT id, name, notes
-      FROM departments
-      WHERE facility_id = $1
-      ORDER BY name
-    `,
+      `SELECT id, name, notes
+       FROM departments
+       WHERE facility_id = $1
+       ORDER BY name`,
       [id],
     )
-
     res.json({ data: result.rows })
   } catch (error) {
     console.error("Error fetching departments:", error)
     res.status(500).json({ message: "Server error while fetching departments" })
   }
 })
-
-
-
-// --------------------
-// POST: Create a new company
-// --------------------
-app.post('/api/companies', authenticateToken,  async (req, res) => {
-  const { name, address, contactName, contactEmail, contactPhone, status } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO companies (name, address, contact_name, contact_email, contact_phone, status)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [name, address, contactName, contactEmail, contactPhone, status]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating company:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// --------------------
-// POST: Create a new facility for a company
-// --------------------
-app.post('/api/companies/:companyId/facilities', authenticateToken,  async (req, res) => {
-  const { companyId } = req.params;
-  const { name, location, address, contactName, contactEmail, contactPhone } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO facilities (company_id, name, location, address, contact_name, contact_email, contact_phone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [companyId, name, location, address, contactName, contactEmail, contactPhone]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating facility:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// --------------------
-// POST: Create a new department for a facility
-// --------------------
-app.post('/api/facilities/:facilityId/departments', authenticateToken,  async (req, res) => {
-  const { facilityId } = req.params;
-  const { name, notes } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO departments (facility_id, name, notes)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [facilityId, name, notes]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating department:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-
 
 // Subscription routes
 app.get("/api/subscription-plans", authenticateToken, async (req, res) => {
@@ -704,7 +681,6 @@ app.get("/api/subscription-plans", authenticateToken, async (req, res) => {
       WHERE is_active = TRUE
       ORDER BY price_monthly
     `)
-
     res.json({ data: result.rows })
   } catch (error) {
     console.error("Error fetching subscription plans:", error)
@@ -770,4 +746,3 @@ app.listen(PORT, () => {
 })
 
 module.exports = app
-
