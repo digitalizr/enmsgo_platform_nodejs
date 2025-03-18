@@ -111,6 +111,7 @@ app.post("/api/auth/login", async (req, res) => {
 
     // Validate input
     if (!email || !password) {
+      console.log("Validation failed: Email and password are required")
       return res.status(400).json({ message: "Email and password are required" })
     }
 
@@ -121,6 +122,7 @@ app.post("/api/auth/login", async (req, res) => {
     )
 
     if (userResult.rows.length === 0) {
+      console.log("User not found")
       return res.status(401).json({ message: "Invalid credentials" })
     }
 
@@ -128,12 +130,14 @@ app.post("/api/auth/login", async (req, res) => {
 
     // Check if user is active
     if (!user.is_active) {
+      console.log("Account is inactive")
       return res.status(401).json({ message: "Account is inactive" })
     }
 
     // Verify password
     const validPassword = await bcrypt.compare(password, user.password_hash)
     if (!validPassword) {
+      console.log("Invalid password")
       return res.status(401).json({ message: "Invalid credentials" })
     }
 
