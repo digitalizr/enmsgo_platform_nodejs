@@ -631,6 +631,69 @@ app.get("/api/facilities/:id/departments", authenticateToken, async (req, res) =
   }
 })
 
+
+
+// --------------------
+// POST: Create a new company
+// --------------------
+app.post('/api/companies', authenticateToken,  async (req, res) => {
+  const { name, address, contactName, contactEmail, contactPhone, status } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO companies (name, address, contact_name, contact_email, contact_phone, status)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [name, address, contactName, contactEmail, contactPhone, status]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating company:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --------------------
+// POST: Create a new facility for a company
+// --------------------
+app.post('/api/companies/:companyId/facilities', authenticateToken,  async (req, res) => {
+  const { companyId } = req.params;
+  const { name, location, address, contactName, contactEmail, contactPhone } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO facilities (company_id, name, location, address, contact_name, contact_email, contact_phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [companyId, name, location, address, contactName, contactEmail, contactPhone]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating facility:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --------------------
+// POST: Create a new department for a facility
+// --------------------
+app.post('/api/facilities/:facilityId/departments', authenticateToken,  async (req, res) => {
+  const { facilityId } = req.params;
+  const { name, notes } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO departments (facility_id, name, notes)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [facilityId, name, notes]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating department:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
 // Subscription routes
 app.get("/api/subscription-plans", authenticateToken, async (req, res) => {
   try {
