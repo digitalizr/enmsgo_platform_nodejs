@@ -16,40 +16,11 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// Database Configuration
+// Database connection
 const pool = new Pool({
-    user: process.env.DB_USER || "admin",
-    host: process.env.DB_HOST || "103.91.67.38",
-    database: process.env.DB_NAME || "energy_management",
-    password: process.env.DB_PASS || "admin123",
-    port: process.env.DB_PORT || 5432,
-    ssl: false, // Change to { rejectUnauthorized: false } if using SSL
-});
-
-// Step 1: Check database connectivity
-async function checkDatabaseConnection() {
-    try {
-        console.log("🔍 Checking database connection...");
-        const client = await pool.connect();
-        console.log("✅ Database connected successfully!");
-        client.release();
-    } catch (error) {
-        console.error("❌ Database connection error:", error);
-    }
-}
-checkDatabaseConnection();
-
-// Step 2: Debugging route to check DB status
-app.get("/health", async (req, res) => {
-    try {
-        console.log("⚡ Checking database health...");
-        const result = await pool.query("SELECT NOW() AS server_time");
-        res.json({ status: "UP", db_time: result.rows[0].server_time });
-    } catch (error) {
-        console.error("🚨 Database health check failed:", error);
-        res.status(500).json({ status: "DOWN", error: error.message });
-    }
-});
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+})
 
 // Middleware
 app.use(helmet()) // Security headers
@@ -106,12 +77,8 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body
 
-    // Log the received input
-    console.log("Login attempt:", { email, password })
-
     // Validate input
     if (!email || !password) {
-      console.log("Validation failed: Email and password are required")
       return res.status(400).json({ message: "Email and password are required" })
     }
 
@@ -122,7 +89,6 @@ app.post("/api/auth/login", async (req, res) => {
     )
 
     if (userResult.rows.length === 0) {
-      console.log("User not found")
       return res.status(401).json({ message: "Invalid credentials" })
     }
 
@@ -130,14 +96,12 @@ app.post("/api/auth/login", async (req, res) => {
 
     // Check if user is active
     if (!user.is_active) {
-      console.log("Account is inactive")
       return res.status(401).json({ message: "Account is inactive" })
     }
 
     // Verify password
     const validPassword = await bcrypt.compare(password, user.password_hash)
     if (!validPassword) {
-      console.log("Invalid password")
       return res.status(401).json({ message: "Invalid credentials" })
     }
 
