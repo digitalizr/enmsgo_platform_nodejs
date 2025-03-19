@@ -1,22 +1,28 @@
 const { client } = require("../lib/connectDB.js");
+const { validate: isUuid } = require("uuid");
+
+// Allowed status values
+const VALID_STATUSES = ["Contracted", "Proposal", "Contacted", "Lead"];
 
 // Register a new company
 const registerCompany = async (req, res) => {
   const { 
     name, 
     address, 
-    city, 
-    state, 
-    postal_code, 
-    country, 
     contact_name, 
     contact_email, 
     contact_phone, 
-    status 
+    status, 
+    notes, 
+    created_by 
   } = req.body;
 
-  if (!name || !address || !city || !state || !postal_code || !country || !contact_name || !contact_email || !contact_phone) {
-    return res.status(400).json({ message: "All fields are required" });
+  if (!name || !address || !contact_name || !contact_email || !contact_phone || !created_by) {
+    return res.status(400).json({ message: "All required fields must be provided" });
+  }
+
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ message: "Invalid status value" });
   }
 
   try {
@@ -24,30 +30,28 @@ const registerCompany = async (req, res) => {
       INSERT INTO companies (
         name, 
         address, 
-        city, 
-        state, 
-        postal_code, 
-        country, 
         contact_name, 
         contact_email, 
         contact_phone, 
         status, 
-        created_at
+        notes, 
+        created_at, 
+        updated_at, 
+        created_by, 
+        updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $8)
       RETURNING *;
     `;
     const values = [
       name, 
       address, 
-      city, 
-      state, 
-      postal_code, 
-      country, 
       contact_name, 
       contact_email, 
       contact_phone, 
-      status || "active"
+      status || "Lead", 
+      notes, 
+      created_by
     ];
     const result = await client.query(query, values);
 
@@ -62,25 +66,12 @@ const registerCompany = async (req, res) => {
 const getCompanyById = async (req, res) => {
   const { id } = req.params;
 
+  if (!isUuid(id)) {
+    return res.status(400).json({ message: "Invalid company ID" });
+  }
+
   try {
-    const query = `
-      SELECT 
-        id, 
-        name, 
-        address, 
-        city, 
-        state, 
-        postal_code, 
-        country, 
-        contact_name, 
-        contact_email, 
-        contact_phone, 
-        status, 
-        created_at, 
-        updated_at 
-      FROM companies 
-      WHERE id = $1;
-    `;
+    const query = `SELECT * FROM companies WHERE id = $1;`;
     const result = await client.query(query, [id]);
 
     if (result.rows.length === 0) {
@@ -97,26 +88,8 @@ const getCompanyById = async (req, res) => {
 // Get all companies
 const getAllCompanies = async (req, res) => {
   try {
-    const query = `
-      SELECT 
-        id, 
-        name, 
-        address, 
-        city, 
-        state, 
-        postal_code, 
-        country, 
-        contact_name, 
-        contact_email, 
-        contact_phone, 
-        status, 
-        created_at, 
-        updated_at 
-      FROM companies 
-      ORDER BY created_at DESC;
-    `;
+    const query = `SELECT * FROM companies ORDER BY created_at DESC;`;
     const result = await client.query(query);
-
     res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error fetching companies:", error);
@@ -129,19 +102,33 @@ const updateCompany = async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
 
+  if (!isUuid(id)) {
+    return res.status(400).json({ message: "Invalid company ID" });
+  }
+
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ message: "No fields to update" });
   }
 
+  if (updates.status && !VALID_STATUSES.includes(updates.status)) {
+    return res.status(400).json({ message: "Invalid status value" });
+  }
+
   try {
+    const validColumns = [
+      "name", "address", "contact_name", "contact_email", "contact_phone", "status", "notes", "updated_by"
+    ];
+    
     let query = "UPDATE companies SET ";
     const values = [];
     let index = 1;
 
     for (const key in updates) {
-      query += `${key} = $${index}, `;
-      values.push(updates[key]);
-      index++;
+      if (validColumns.includes(key)) {
+        query += `${key} = $${index}, `;
+        values.push(updates[key]);
+        index++;
+      }
     }
 
     query = query.slice(0, -2) + `, updated_at = NOW() WHERE id = $${index} RETURNING *;`;
@@ -163,6 +150,11 @@ const updateCompany = async (req, res) => {
 // Delete a company by ID
 const deleteCompany = async (req, res) => {
   const { id } = req.params;
+
+  if (!isUuid(id)) {
+    return res.status(400).json({ message: "Invalid company ID" });
+  }
+
   try {
     const query = "DELETE FROM companies WHERE id = $1 RETURNING *;";
     const result = await client.query(query, [id]);

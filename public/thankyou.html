@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mummus - Hummus & More</title>
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css"
+    />
+    <link rel="stylesheet" href="./catering.css" />
+    <link rel="icon" href="Assets/logo.png" type="Assets/png" sizes="16x16" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@auto&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="Assets+Fonts+Colors/Fonts/Belmonte Rough_0.ttf"
+    />
+    <script src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
+    <!-- css for index -->
+    <link rel="stylesheet" href="index.css" />
+    <link rel="stylesheet" href="thankyou.css">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body data-spy="scroll" data-target="#myScrollspy" data-offset="1">
+    <div class="container-fluid p-0" style="position: relative">
+      <div class="d-xl-block" id="section">
+        <div class="row m-0" style="width: 1005">
+          <div class="col-12 p-0">
+            <div class="">
+              <img
+                src="Assets/top_banner_bg.png"
+                class="w-100 banner_img"
+                alt=""
+              />
+            </div>
+          </div>
+        </div>
+        <div class="banner">
+          <div
+            class="row"
+            style="
+              display: flex !important;
+              justify-content: space-between !important;
+              width: 100% !important;
+            "
+          >
+            <div class="col-4">
+
+            </div>
+            <div>
+              <nav class="navbar navbar-expand-xl navbar-light">
+                <button
+                  class="navbar-toggler"
+                  type="button"
+                  data-toggle="collapse"
+                  data-target="#navbarSupportedContent"
+                  aria-controls="navbarSupportedContent"
+                  aria-expanded="false"
+                  aria-label="Toggle navigation"
+                >
+                  <span class="navbar-toggler-icon"></span>
+                </button>
+                <div
+                  class="collapse navbar-collapse"
+                  id="navbarSupportedContent"
+                >
+                  <ul
+                    class="navbar-nav m-auto"
+                    style="display: flex; align-items: center"
+                  >
+                    <li class="nav-item">
+                      <a
+                        class="nav-link en text-light"
+                        href="index.html#section"
+                      >
+                        <span>Home</span>
+                      </a>
+                      <a
+                        class="nav-link se text-light"
+                        href="index.html#section"
+                      >
+                        <span>HEM</span>
+                      </a>
+                    </li>
+                    <li class="nav-item">
+                      <a
+                        class="nav-link en text-light"
+                        href="index.html#section1"
+                      >
+                        <span>About</span>
+                      </a>
+                      <a
+                        class="nav-link se text-light"
+                        href="index.html#section1"
+                      >
+                        <span>OM OSS</span>
+                      </a>
+                    </li>
+                    <li class="nav-item">
+                      <a
+                        class="nav-link en text-light"
+                        href="index.html#section2"
+                      >
+                        <span>Menu</span>
+                      </a>
+                      <a
+                        class="nav-link se text-light"
+                        href="index.html#section2"
+                      >
+                        <span>MENY</span>
+                      </a>
+                    </li>
+                    <li class="nav-item">
+                      <a
+                        class="nav-link en text-light"
+                        href="index.html#section3"
+                      >
+                        <span>Gallery</span>
+                      </a>
+                      <a
+                        class="nav-link se text-light"
+                        href="index.html#section3"
+                      >
+                        <span>GALLERI</span>
+                      </a>
+                    </li>
+                    <li class="nav-item">
+                      <a
+                        class="nav-link en text-light"
+                        href="index.html#section4"
+                      >
+                        <span>Contact</span>
+                      </a>
+                      <a
+                        class="nav-link se text-light"
+                        href="index.html#section4"
+                      >
+                        <span>KONTAKT</span>
+                      </a>
+                    </li>
+                    <button class="cateringmenubtn">
+                      <a href="/catering.html">Catering Menu</a>
+                    </button>
+                    <!-- <li class="nav-item">
+                                        <a href="https://instagram.com/mummus.se?igshid=7toboeu31sp">
+                                            <i class="fa fa-instagram mr-lg-1 mr-0"></i>
+                                        </a>
+                                        <a href="https://www.facebook.com/Mummus-114979863593938/">
+                                            <i class="fa fa-facebook-f mr-lg-1 mr-0"></i>
+                                        </a>
+                                        <a href="mailto:info@mummus.se">
+                                            <i class="fa fa-envelope"></i>
+                                        </a>
+                                    </li> -->
+                    <li class="nav-item dropdown ml-lg-3 ml-0">
+                      <button
+                        class="btn btn-light dropdown"
+                        id="navbarDropdown"
+                        role="button"
+                        data-toggle="dropdown"
+                        aria-haspopup="true"
+                        aria-expanded="false"
+                      >
+                        <div class="se">
+                          <img
+                            src="Assets/swedish_flag.png"
+                            alt=""
+                            class="flag"
+                          />
+                          <span class="d-inline-block px-2">Svenska</span>
+                          <img class="pr-2" src="Assets/drop_down.png" alt="" />
+                        </div>
+                        <div class="en">
+                          <img
+                            src="https://ilunch.nu/public/public_site_assets/images/e-flag.png"
+                            alt=""
+                            class="flag"
+                          />
+                          <span class="d-inline-block px-2">English</span>
+                          <img class="pr-2" src="Assets/drop_down.png" alt="" />
+                        </div>
+                      </button>
+                      <div
+                        class="dropdown-menu"
+                        aria-labelledby="navbarDropdown"
+                      >
+                        <a
+                          class="dropdown-item"
+                          id="se"
+                          href="index.html#se"
+                          title=""
+                          >Svenska</a
+                        >
+                        <a class="dropdown-item" id="en" href="index.html#en"
+                          >English</a
+                        >
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </nav>
+            </div>
+          </div>
+
+          <!-- content for information Details -->
+          <div class="thankyouCon">
+            <img src="Assets/logo.png" class="imges" alt="" />
+            <div class="thankyouContent">
+                <h1
+            class="mb-4 se headingMainColorful"
+            style="font-family: 'belmonte'; color: #096e6c; text-align: center"
+          >
+            Thank You
+          </h1>
+          <h3>You will receive an order confirmation shortly to your given email address. In the meantime, explore our rest of the menu and get ready for your next order.</h3>
+          <button class="keeporderbtn">
+            Keep Ordering
+          </button>
+            </div>
+          </div>
+
+
+          <!-- footer -->
+          <div class="contact row ml-0 mr-0 mt-lg-5 pt-5" id="section4">
+            <div class="col-md-6 mt-5">
+              <h1
+                class="mb-4 en"
+                style="font-family: 'belmonte'; color: #096e6c; font-size: 50px"
+              >
+                <span style="font-family: 'belmonte'; color: #85c442"
+                  >Contact</span
+                >
+                Us
+              </h1>
+              <h1
+                class="mb-4 se"
+                style="font-family: 'belmonte'; color: #096e6c; font-size: 50px"
+              >
+                <span style="font-family: 'belmonte'; color: #85c442"
+                  >Kontakta
+                </span>
+                Oss
+              </h1>
+              <p class="en response">
+                <img
+                  src="Assets/location.png"
+                  alt=""
+                  class="locton pr-1 mt-1"
+                />
+                <span span class="ml-2"
+                  >Klara Norra Kyrkogata32
+                  <br />
+                  11122 Stockholm</span
+                >
+              </p>
+              <p class="se response d-inline-flex">
+                <img
+                  src="Assets/location.png"
+                  alt=""
+                  class="locton pr-1 mt-1"
+                />
+                <span class="ml-2"
+                  >Klara Norra Kyrkogata 32
+                  <br />
+                  11122 Stockholm
+                </span>
+              </p>
+              <p class="en">
+                <img src="Assets/phone.png" alt="" class="locton pr-2" />+46 701
+                75 65 65
+              </p>
+              <p class="se">
+                <img src="Assets/phone.png" alt="" class="locton pr-2" />+46 701
+                75 65 65
+              </p>
+              <p class="en">
+                <i class="fa fa-envelope pr-2" style="color: #096e6c"></i>
+                info@mummus.se
+              </p>
+              <p class="se">
+                <i class="fa fa-envelope pr-2" style="color: #096e6c"></i>
+                info@mummus.se
+              </p>
+              <p class="en">
+                <img src="Assets/time.png" alt="" class="locton pr-1" /> Please
+                check our opening hours
+                <a href="https://g.co/kgs/T1pnvYw">here</a>
+              </p>
+              <p class="se">
+                <img src="Assets/time.png" alt="" class="locton pr-1" /> Våra
+                öppettider finns <a href="https://g.co/kgs/T1pnvYw">här</a>
+              </p>
+              <h1
+                class="mb-2 mt-5 en"
+                style="font-family: 'belmonte'; color: #096e6c; font-size: 30px"
+              >
+                Follow Us
+              </h1>
+              <h1
+                class="mb-2 mt-5 se"
+                style="font-family: 'belmonte'; color: #096e6c; font-size: 30px"
+              >
+                Följ Oss
+              </h1>
+              <div class="socialmedia pt-3">
+                <a href="https://instagram.com/mummus.se?igshid=7toboeu31sp">
+                  <img
+                    src="Assets/Instagram-green.png"
+                    alt=""
+                    class="mr-3 non-hover"
+                  />
+                  <img src="Assets/Instagram.png" alt="" class="mr-3 hover" />
+                </a>
+                <a href="https://www.facebook.com/Mummus-114979863593938/">
+                  <img
+                    src="Assets/Facebook-green.png"
+                    alt=""
+                    class="mr-3 non-hover"
+                  />
+                  <img src="Assets/Facebook.png" alt="" class="mr-3 hover" />
+                </a>
+                <a href="mailto:info@mummus.se">
+                  <img
+                    src="Assets/email-green.png"
+                    alt=""
+                    class="mr-3 non-hover"
+                  />
+                  <img src="Assets/email.png" alt="" class="mr-3 hover" />
+                </a>
+              </div>
+            </div>
+            <div class="col-md-6 pt-3 mt-lg-5">
+              <iframe
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2034.9034643273696!2d18.05573091615477!3d59.334565517644776!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x465f9d6725633ffd%3A0xf7cc2bfa147b6a9e!2sKlara%20Norra%20kyrkogata%2032%2C%20111%2022%20Stockholm%2C%20Sweden!5e0!3m2!1sen!2s!4v1594796555953!5m2!1sen!2s"
+                class="w-100 map"
+                frameborder="0"
+                style="border: 0"
+                allowfullscreen=""
+                aria-hidden="false"
+                tabindex="0"
+              ></iframe>
+            </div>
+          </div>
+          <!-- footer Container -->
+          <footer
+            class="footer"
+            id="section5"
+            style="position: relative; bottom: 0"
+          >
+            <div class="row m-0 footer-section pb-4">
+              <div class="col-lg-3 col-md-4 self-flex text-md-center">
+                <img src="Assets/footerlogo.png" class="w-50" alt="" />
+              </div>
+              <div
+                class="col-lg-6 col-md-6 pl-4 text-white text-uppercase self-flex"
+              >
+                <div class="footer-headings en">
+                  <a href="#section" class="text-reset"
+                    ><span class="">home</span></a
+                  >
+                  <a href="#section1" class="text-reset"
+                    ><span class="">About</span></a
+                  >
+                  <a href="#section2" class="text-reset"
+                    ><span class="">Menu</span></a
+                  >
+                  <br class="d-lg-none d-md-block d-none" />
+
+                  <a href="#section3" class="text-reset"
+                    ><span class="">Gallery</span></a
+                  >
+                  <a href="#section4" class="text-reset"
+                    ><span class="">Contact</span></a
+                  >
+                  <br />
+                  <small class="pl-lg-3 pt-2 title-1"
+                    >Mummus 2020. All Rights Reserved</small
+                  >
+                </div>
+                <div class="footer-headings se">
+                  <a href="#section" class="text-reset"
+                    ><span class="">HEM</span></a
+                  >
+                  <a href="#section1" class="text-reset"
+                    ><span class="">OM OSS</span></a
+                  >
+                  <a href="#section2" class="text-reset"
+                    ><span class="">MENY</span></a
+                  >
+                  <br class="d-lg-none d-md-block d-none" />
+
+                  <a href="#section3" class="text-reset"
+                    ><span class="">GALLERI</span></a
+                  >
+                  <a href="#section4" class="text-reset"
+                    ><span class="">KONTAKT</span></a
+                  >
+                  <br />
+                  <div class="pl-lg-3 mt-2 title-1">
+                    Mummus 2020. Alla rättigheter förbehålls
+                  </div>
+                </div>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+    <script src="lightbox.js"></script>
+    <script type="text/javascript">
+      $(document).on("click", '[data-toggle="lightbox"]', function (event) {
+        event.preventDefault();
+        $(this).ekkoLightbox();
+      });
+    </script>
+  </body>
+</html>
