@@ -837,6 +837,7 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
   try {
     const users = await db.manyOrNone(`
       SELECT id, email, first_name, last_name, role, status, created_at, updated_at, 
+             require_password_change, last_  last_name, role, status, created_at, updated_at, 
              require_password_change, last_login_at
       FROM users
       ORDER BY created_at DESC
@@ -1205,6 +1206,117 @@ app.get("/api/subscriptions", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error fetching subscriptions:", error)
     res.status(500).json({ message: "Server error while fetching subscriptions" })
+  }
+})
+
+
+
+//hallo
+// Mohan Facilities routes - FIXED ROUTE PATH
+app.post("/api/companies/:companyId/facilities", authenticateToken, async (req, res) => {
+  try {
+    const { companyId } = req.params
+    const { name, location, address, contact_name, contact_email, contact_phone, notes } = req.body
+
+    console.log("Creating facility with data:", JSON.stringify(req.body))
+    console.log("For company ID:", companyId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Validate required fields
+    if (!name) {
+      return res.status(400).json({ message: "Facility name is required" })
+    }
+
+    // Check if company exists
+    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [companyId])
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" })
+    }
+
+    // Insert new facility
+    try {
+      const newFacility = await db.one(
+        `
+        INSERT INTO facilities (
+          company_id, name, location, address, contact_name, contact_email, contact_phone, notes, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *
+      `,
+        [
+          companyId,
+          name,
+          location || null,
+          address || null,
+          contact_name || null,
+          contact_email || null,
+          contact_phone || null,
+          notes || null,
+          req.user.id,
+        ],
+      )
+
+      console.log("Facility created successfully:", newFacility)
+      return res.status(201).json(newFacility)
+    } catch (dbError) {
+      console.error("Database error creating facility:", dbError)
+      return res.status(500).json({
+        message: "Database error creating facility",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error creating facility:", error)
+    return res.status(500).json({ message: "Server error creating facility", details: error.message })
+  }
+})
+
+// Departments routes
+app.post("/api/facilities/:facilityId/departments", authenticateToken, async (req, res) => {
+  try {
+    const { facilityId } = req.params
+    const { name, notes } = req.body
+
+    console.log("Creating department with data:", JSON.stringify(req.body))
+    console.log("For facility ID:", facilityId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Validate required fields
+    if (!name) {
+      return res.status(400).json({ message: "Department name is required" })
+    }
+
+    
+
+    // Check if facility exists
+    const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1", [facilityId])
+    if (!facility) {
+      return res.status(404).json({ message: "Facility not found" })
+    }
+
+    // Insert new department
+    try {
+      const newDepartment = await db.one(
+        `
+        INSERT INTO departments (
+          facility_id, name, notes, created_by
+        ) VALUES ($1, $2, $3, $4) RETURNING *
+      `,
+        [facilityId, name, notes || null, req.user.id],
+      )
+
+      console.log("Department created successfully:", newDepartment)
+      return res.status(201).json(newDepartment)
+    } catch (dbError) {
+      console.error("Database error creating department:", dbError)
+      return res.status(500).json({
+        message: "Database error creating department",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error creating department:", error)
+    return res.status(500).json({ message: "Server error creating department", details: error.message })
   }
 })
 
