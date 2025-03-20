@@ -459,6 +459,469 @@ app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), asy
   }
 })
 
+// Add these routes after the smart meters routes
+
+// Edge Gateways routes
+app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
+  try {
+    const { status, manufacturer, search, limit = 10, offset = 0 } = req.query
+
+    let query = `
+      SELECT eg.*, dm.id as model_id, dm.name as model_name, m.name as manufacturer_name
+      FROM edge_gateways eg
+      LEFT JOIN device_models dm ON eg.model_id = dm.id
+      LEFT JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    if (status && status !== "all") {
+      query += ` AND eg.status = $${paramCount}`
+      queryParams.push(status)
+      paramCount++
+    }
+
+    if (manufacturer) {
+      query += ` AND m.id = $${paramCount}`
+      queryParams.push(manufacturer)
+      paramCount++
+    }
+
+    if (search) {
+      query += ` AND (eg.serial_number ILIKE $${paramCount} OR dm.name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
+      queryParams.push(`%${search}%`)
+      paramCount++
+    }
+
+    // Count total
+    const countQuery = `SELECT COUNT(*) FROM (${query}) as count_query`
+    const countResult = await db.one(countQuery, queryParams)
+    const total = Number.parseInt(countResult.count)
+
+    // Add pagination
+    query += ` ORDER BY eg.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`
+    queryParams.push(limit, offset)
+
+    const edgeGateways = await db.manyOrNone(query, queryParams)
+
+    return res.status(200).json({
+      data: edgeGateways,
+      pagination: {
+        total,
+        limit: Number.parseInt(limit),
+        offset: Number.parseInt(offset),
+        pages: Math.ceil(total / limit),
+      },
+    })
+  } catch (error) {
+    console.error("Error fetching edge gateways:", error)
+    return res.status(500).json({ message: "Server error fetching edge gateways" })
+  }
+})
+
+app.post("/api/devices/edge-gateways", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { serial_number, manufacturer_id, model_id, mac_address, firmware_version, status, notes } = req.body
+
+    // Check if serial number already exists
+    const existing = await db.oneOrNone("SELECT id FROM edge_gateways WHERE serial_number = $1", [serial_number])
+    if (existing) {
+      return res.status(409).json({ message: "Edge gateway with this serial number already exists" })
+    }
+
+    // Insert new edge gateway
+    const newEdgeGateway = await db.one(
+      `
+      INSERT INTO edge_gateways (
+        serial_number, model_id, mac_address, firmware_version, status, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+    `,
+      [
+        serial_number,
+        model_id,
+        mac_address || null,
+        firmware_version || null,
+        status || "available",
+        notes || null,
+        req.user.id,
+      ],
+    )
+
+    return res.status(201).json(newEdgeGateway)
+  } catch (error) {
+    console.error("Error creating edge gateway:", error)
+    return res.status(500).json({ message: "Server error creating edge gateway" })
+  }
+})
+
+app.get("/api/devices/edge-gateways/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const edgeGateway = await db.oneOrNone(
+      `
+      SELECT eg.*, dm.name as model_name, m.name as manufacturer_name
+      FROM edge_gateways eg
+      LEFT JOIN device_models dm ON eg.model_id = dm.id
+      LEFT JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE eg.id = $1
+    `,
+      [id],
+    )
+
+    if (!edgeGateway) {
+      return res.status(404).json({ message: "Edge gateway not found" })
+    }
+
+    return res.status(200).json(edgeGateway)
+  } catch (error) {
+    console.error("Error fetching edge gateway:", error)
+    return res.status(500).json({ message: "Server error fetching edge gateway" })
+  }
+})
+
+app.put("/api/devices/edge-gateways/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { id } = req.params
+    const { serial_number, model_id, mac_address, firmware_version, status, notes } = req.body
+
+    // Check if edge gateway exists
+    const edgeGateway = await db.oneOrNone("SELECT id FROM edge_gateways WHERE id = $1", [id])
+    if (!edgeGateway) {
+      return res.status(404).json({ message: "Edge gateway not found" })
+    }
+
+    // Update edge gateway
+    const updatedEdgeGateway = await db.one(
+      `
+      UPDATE edge_gateways SET
+        serial_number = $1,
+        model_id = $2,
+        mac_address = $3,
+        firmware_version = $4,
+        status = $5,
+        notes = $6,
+        updated_at = NOW(),
+        updated_by = $7
+      WHERE id = $8
+      RETURNING *
+    `,
+      [serial_number, model_id, mac_address || null, firmware_version || null, status, notes || null, req.user.id, id],
+    )
+
+    return res.status(200).json(updatedEdgeGateway)
+  } catch (error) {
+    console.error("Error updating edge gateway:", error)
+    return res.status(500).json({ message: "Server error updating edge gateway" })
+  }
+})
+
+app.delete("/api/devices/edge-gateways/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
+  try {
+    const { id } = req.params
+
+    // Check if edge gateway exists
+    const edgeGateway = await db.oneOrNone("SELECT id FROM edge_gateways WHERE id = $1", [id])
+    if (!edgeGateway) {
+      return res.status(404).json({ message: "Edge gateway not found" })
+    }
+
+    // Delete edge gateway
+    await db.none("DELETE FROM edge_gateways WHERE id = $1", [id])
+
+    return res.status(200).json({ message: "Edge gateway deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting edge gateway:", error)
+    return res.status(500).json({ message: "Server error deleting edge gateway" })
+  }
+})
+
+// IP Addresses for Edge Gateways
+app.get("/api/devices/edge-gateways/:id/ip-addresses", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const ipAddresses = await db.manyOrNone(
+      `
+      SELECT * FROM edge_gateway_ip_addresses
+      WHERE edge_gateway_id = $1
+      ORDER BY created_at DESC
+    `,
+      [id],
+    )
+
+    return res.status(200).json({ data: ipAddresses })
+  } catch (error) {
+    console.error("Error fetching IP addresses:", error)
+    return res.status(500).json({ message: "Server error fetching IP addresses" })
+  }
+})
+
+app.post(
+  "/api/devices/edge-gateways/:id/ip-addresses",
+  authenticateToken,
+  checkRole(["admin", "operator"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params
+      const { ip_address, port } = req.body
+
+      // Check if edge gateway exists
+      const edgeGateway = await db.oneOrNone("SELECT id FROM edge_gateways WHERE id = $1", [id])
+      if (!edgeGateway) {
+        return res.status(404).json({ message: "Edge gateway not found" })
+      }
+
+      // Insert new IP address
+      const newIpAddress = await db.one(
+        `
+      INSERT INTO edge_gateway_ip_addresses (
+        edge_gateway_id, ip_address, port, created_by
+      ) VALUES ($1, $2, $3, $4) RETURNING *
+    `,
+        [id, ip_address, port || null, req.user.id],
+      )
+
+      return res.status(201).json(newIpAddress)
+    } catch (error) {
+      console.error("Error adding IP address:", error)
+      return res.status(500).json({ message: "Server error adding IP address" })
+    }
+  },
+)
+
+app.delete(
+  "/api/devices/edge-gateways/:gatewayId/ip-addresses/:ipId",
+  authenticateToken,
+  checkRole(["admin", "operator"]),
+  async (req, res) => {
+    try {
+      const { gatewayId, ipId } = req.params
+
+      // Check if IP address exists and belongs to the gateway
+      const ipAddress = await db.oneOrNone(
+        "SELECT id FROM edge_gateway_ip_addresses WHERE id = $1 AND edge_gateway_id = $2",
+        [ipId, gatewayId],
+      )
+      if (!ipAddress) {
+        return res.status(404).json({ message: "IP address not found or does not belong to this gateway" })
+      }
+
+      // Delete IP address
+      await db.none("DELETE FROM edge_gateway_ip_addresses WHERE id = $1", [ipId])
+
+      return res.status(200).json({ message: "IP address removed successfully" })
+    } catch (error) {
+      console.error("Error removing IP address:", error)
+      return res.status(500).json({ message: "Server error removing IP address" })
+    }
+  },
+)
+
+// Specifications for Edge Gateways
+app.get("/api/devices/edge-gateways/:id/specifications", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const specifications = await db.oneOrNone(
+      `
+      SELECT * FROM edge_gateway_specifications
+      WHERE edge_gateway_id = $1
+    `,
+      [id],
+    )
+
+    return res.status(200).json({ data: specifications || {} })
+  } catch (error) {
+    console.error("Error fetching specifications:", error)
+    return res.status(500).json({ message: "Server error fetching specifications" })
+  }
+})
+
+app.put(
+  "/api/devices/edge-gateways/:id/specifications",
+  authenticateToken,
+  checkRole(["admin", "operator"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params
+      const { os, os_version, cpu, memory, storage, connectivity, additional_specs } = req.body
+
+      // Check if edge gateway exists
+      const edgeGateway = await db.oneOrNone("SELECT id FROM edge_gateways WHERE id = $1", [id])
+      if (!edgeGateway) {
+        return res.status(404).json({ message: "Edge gateway not found" })
+      }
+
+      // Check if specifications already exist
+      const existingSpecs = await db.oneOrNone(
+        "SELECT id FROM edge_gateway_specifications WHERE edge_gateway_id = $1",
+        [id],
+      )
+
+      let specs
+      if (existingSpecs) {
+        // Update existing specifications
+        specs = await db.one(
+          `
+        UPDATE edge_gateway_specifications SET
+          os = $1,
+          os_version = $2,
+          cpu = $3,
+          memory = $4,
+          storage = $5,
+          connectivity = $6,
+          additional_specs = $7,
+          updated_at = NOW(),
+          updated_by = $8
+        WHERE edge_gateway_id = $9
+        RETURNING *
+      `,
+          [
+            os || null,
+            os_version || null,
+            cpu || null,
+            memory || null,
+            storage || null,
+            connectivity || [],
+            additional_specs || null,
+            req.user.id,
+            id,
+          ],
+        )
+      } else {
+        // Insert new specifications
+        specs = await db.one(
+          `
+        INSERT INTO edge_gateway_specifications (
+          edge_gateway_id, os, os_version, cpu, memory, storage, connectivity, additional_specs, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *
+      `,
+          [
+            id,
+            os || null,
+            os_version || null,
+            cpu || null,
+            memory || null,
+            storage || null,
+            connectivity || [],
+            additional_specs || null,
+            req.user.id,
+          ],
+        )
+      }
+
+      return res.status(200).json(specs)
+    } catch (error) {
+      console.error("Error updating specifications:", error)
+      return res.status(500).json({ message: "Server error updating specifications" })
+    }
+  },
+)
+
+// Connection Details for Edge Gateways
+app.get("/api/devices/edge-gateways/:id/connection-details", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const connectionDetails = await db.oneOrNone(
+      `
+      SELECT * FROM edge_gateway_connection_details
+      WHERE edge_gateway_id = $1
+    `,
+      [id],
+    )
+
+    return res.status(200).json({ data: connectionDetails || {} })
+  } catch (error) {
+    console.error("Error fetching connection details:", error)
+    return res.status(500).json({ message: "Server error fetching connection details" })
+  }
+})
+
+app.put(
+  "/api/devices/edge-gateways/:id/connection-details",
+  authenticateToken,
+  checkRole(["admin", "operator"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params
+      const { ssh_username, ssh_password, ssh_key, web_interface_url, web_username, web_password, api_key, notes } =
+        req.body
+
+      // Check if edge gateway exists
+      const edgeGateway = await db.oneOrNone("SELECT id FROM edge_gateways WHERE id = $1", [id])
+      if (!edgeGateway) {
+        return res.status(404).json({ message: "Edge gateway not found" })
+      }
+
+      // Check if connection details already exist
+      const existingDetails = await db.oneOrNone(
+        "SELECT id FROM edge_gateway_connection_details WHERE edge_gateway_id = $1",
+        [id],
+      )
+
+      let details
+      if (existingDetails) {
+        // Update existing connection details
+        details = await db.one(
+          `
+        UPDATE edge_gateway_connection_details SET
+          ssh_username = $1,
+          ssh_password = $2,
+          ssh_key = $3,
+          web_interface_url = $4,
+          web_username = $5,
+          web_password = $6,
+          api_key = $7,
+          notes = $8,
+          updated_at = NOW(),
+          updated_by = $9
+        WHERE edge_gateway_id = $10
+        RETURNING *
+      `,
+          [
+            ssh_username || null,
+            ssh_password || null,
+            ssh_key || null,
+            web_interface_url || null,
+            web_username || null,
+            web_password || null,
+            api_key || null,
+            notes || null,
+            req.user.id,
+            id,
+          ],
+        )
+      } else {
+        // Insert new connection details
+        details = await db.one(
+          `
+        INSERT INTO edge_gateway_connection_details (
+          edge_gateway_id, ssh_username, ssh_password, ssh_key, web_interface_url, web_username, web_password, api_key, notes, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *
+      `,
+          [
+            id,
+            ssh_username || null,
+            ssh_password || null,
+            ssh_key || null,
+            web_interface_url || null,
+            web_username || null,
+            web_password || null,
+            api_key || null,
+            notes || null,
+            req.user.id,
+          ],
+        )
+      }
+
+      return res.status(200).json(details)
+    } catch (error) {
+      console.error("Error updating connection details:", error)
+      return res.status(500).json({ message: "Server error updating connection details" })
+    }
+  },
+)
+
 // Companies routes - IMPROVED ERROR HANDLING
 app.post("/api/companies", authenticateToken, async (req, res) => {
   try {
@@ -615,7 +1078,7 @@ app.get("/api/companies", authenticateToken, async (req, res) => {
   }
 })
 
-app.put("/api/companies/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+app.put("/api/companies/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
     const {
@@ -632,53 +1095,37 @@ app.put("/api/companies/:id", authenticateToken, checkRole(["admin", "operator"]
       status,
     } = req.body
 
+    console.log("Updating company with ID:", id)
+    console.log("Company data:", JSON.stringify(req.body))
+
     // Check if company exists
     const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [id])
     if (!company) {
       return res.status(404).json({ message: "Company not found" })
     }
 
-    // Update company
+    // Update company with simplified query to match the table structure
     const updatedCompany = await db.one(
       `
       UPDATE companies SET
         name = $1,
-        industry = $2,
-        address = $3,
-        city = $4,
-        state = $5,
-        postal_code = $6,
-        country = $7,
-        contact_name = $8,
-        contact_email = $9,
-        contact_phone = $10,
-        status = $11,
+        address = $2,
+        contact_name = $3,
+        contact_email = $4,
+        contact_phone = $5,
+        status = $6,
         updated_at = NOW(),
-        updated_by = $12
-      WHERE id = $13
+        updated_by = $7
+      WHERE id = $8
       RETURNING *
     `,
-      [
-        name,
-        industry,
-        address,
-        city,
-        state,
-        postal_code,
-        country,
-        contact_name,
-        contact_email,
-        contact_phone,
-        status,
-        req.user.id,
-        id,
-      ],
+      [name, address || null, contact_name, contact_email, contact_phone || null, status || "active", req.user.id, id],
     )
 
     return res.status(200).json(updatedCompany)
   } catch (error) {
     console.error("Error updating company:", error)
-    return res.status(500).json({ message: "Server error updating company" })
+    return res.status(500).json({ message: "Server error updating company", details: error.message })
   }
 })
 
@@ -836,14 +1283,51 @@ app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), asyn
 app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const users = await db.manyOrNone(`
-      SELECT id, email, first_name, last_name, role, status, created_at, updated_at, 
-             require_password_change, last_  last_name, role, status, created_at, updated_at, 
-             require_password_change, last_login_at
-      FROM users
-      ORDER BY created_at DESC
+      SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.status, 
+             u.created_at, u.updated_at, u.require_password_change, u.last_login_at,
+             c.id as company_id, c.name as company_name,
+             f.id as facility_id, f.name as facility_name,
+             d.id as department_id, d.name as department_name
+      FROM users u
+      LEFT JOIN companies c ON u.company_id = c.id
+      LEFT JOIN facilities f ON u.facility_id = f.id
+      LEFT JOIN departments d ON u.department_id = d.id
+      ORDER BY u.created_at DESC
     `)
 
-    return res.status(200).json(users)
+    // Format the response
+    const formattedUsers = users.map((user) => ({
+      id: user.id,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      role: user.role,
+      is_active: user.status === "active",
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      require_password_change: user.require_password_change,
+      last_login_at: user.last_login_at,
+      company: user.company_id
+        ? {
+            id: user.company_id,
+            name: user.company_name,
+          }
+        : null,
+      facility: user.facility_id
+        ? {
+            id: user.facility_id,
+            name: user.facility_name,
+          }
+        : null,
+      department: user.department_id
+        ? {
+            id: user.department_id,
+            name: user.department_name,
+          }
+        : null,
+    }))
+
+    return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
     return res.status(500).json({ message: "Server error fetching users" })
@@ -1209,10 +1693,7 @@ app.get("/api/subscriptions", authenticateToken, async (req, res) => {
   }
 })
 
-
-
-//hallo
-// Mohan Facilities routes - FIXED ROUTE PATH
+// Facilities routes - FIXED ROUTE PATH
 app.post("/api/companies/:companyId/facilities", authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.params
@@ -1270,7 +1751,129 @@ app.post("/api/companies/:companyId/facilities", authenticateToken, async (req, 
   }
 })
 
-// Departments routes
+// Update facility
+app.put("/api/companies/:companyId/facilities/:facilityId", authenticateToken, async (req, res) => {
+  try {
+    const { companyId, facilityId } = req.params
+    const { name, location, address, contact_name, contact_email, contact_phone, notes } = req.body
+
+    console.log("Updating facility with data:", JSON.stringify(req.body))
+    console.log("For company ID:", companyId)
+    console.log("Facility ID:", facilityId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Validate required fields
+    if (!name) {
+      return res.status(400).json({ message: "Facility name is required" })
+    }
+
+    // Check if company exists
+    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [companyId])
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" })
+    }
+
+    // Check if facility exists and belongs to the company
+    const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1 AND company_id = $2", [
+      facilityId,
+      companyId,
+    ])
+    if (!facility) {
+      return res.status(404).json({ message: "Facility not found or does not belong to the company" })
+    }
+
+    // Update facility
+    try {
+      const updatedFacility = await db.one(
+        `
+        UPDATE facilities SET
+          name = $1,
+          location = $2,
+          address = $3,
+          contact_name = $4,
+          contact_email = $5,
+          contact_phone = $6,
+          notes = $7,
+          updated_at = NOW(),
+          updated_by = $8
+        WHERE id = $9 AND company_id = $10
+        RETURNING *
+      `,
+        [
+          name,
+          location || null,
+          address || null,
+          contact_name || null,
+          contact_email || null,
+          contact_phone || null,
+          notes || null,
+          req.user.id,
+          facilityId,
+          companyId,
+        ],
+      )
+
+      console.log("Facility updated successfully:", updatedFacility)
+      return res.status(200).json(updatedFacility)
+    } catch (dbError) {
+      console.error("Database error updating facility:", dbError)
+      return res.status(500).json({
+        message: "Database error updating facility",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error updating facility:", error)
+    return res.status(500).json({ message: "Server error updating facility", details: error.message })
+  }
+})
+
+// Delete facility
+app.delete("/api/companies/:companyId/facilities/:facilityId", authenticateToken, async (req, res) => {
+  try {
+    const { companyId, facilityId } = req.params
+
+    console.log("Deleting facility with ID:", facilityId)
+    console.log("For company ID:", companyId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Check if company exists
+    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [companyId])
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" })
+    }
+
+    // Check if facility exists and belongs to the company
+    const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1 AND company_id = $2", [
+      facilityId,
+      companyId,
+    ])
+    if (!facility) {
+      return res.status(404).json({ message: "Facility not found or does not belong to the company" })
+    }
+
+    // Delete facility (cascade will delete departments)
+    try {
+      await db.none("DELETE FROM facilities WHERE id = $1 AND company_id = $2", [facilityId, companyId])
+
+      console.log("Facility deleted successfully")
+      return res.status(200).json({ message: "Facility deleted successfully" })
+    } catch (dbError) {
+      console.error("Database error deleting facility:", dbError)
+      return res.status(500).json({
+        message: "Database error deleting facility",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error deleting facility:", error)
+    return res.status(500).json({ message: "Server error deleting facility", details: error.message })
+  }
+})
+
+// Departments routes - CRUD operations
 app.post("/api/facilities/:facilityId/departments", authenticateToken, async (req, res) => {
   try {
     const { facilityId } = req.params
@@ -1284,8 +1887,6 @@ app.post("/api/facilities/:facilityId/departments", authenticateToken, async (re
     if (!name) {
       return res.status(400).json({ message: "Department name is required" })
     }
-
-    
 
     // Check if facility exists
     const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1", [facilityId])
@@ -1317,6 +1918,171 @@ app.post("/api/facilities/:facilityId/departments", authenticateToken, async (re
   } catch (error) {
     console.error("Error creating department:", error)
     return res.status(500).json({ message: "Server error creating department", details: error.message })
+  }
+})
+
+// Update department
+app.put("/api/facilities/:facilityId/departments/:departmentId", authenticateToken, async (req, res) => {
+  try {
+    const { facilityId, departmentId } = req.params
+    const { name, notes } = req.body
+
+    console.log("Updating department with data:", JSON.stringify(req.body))
+    console.log("For facility ID:", facilityId)
+    console.log("Department ID:", departmentId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Validate required fields
+    if (!name) {
+      return res.status(400).json({ message: "Department name is required" })
+    }
+
+    // Check if facility exists
+    const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1", [facilityId])
+    if (!facility) {
+      return res.status(404).json({ message: "Facility not found" })
+    }
+
+    // Check if department exists and belongs to the facility
+    const department = await db.oneOrNone("SELECT id FROM departments WHERE id = $1 AND facility_id = $2", [
+      departmentId,
+      facilityId,
+    ])
+    if (!department) {
+      return res.status(404).json({ message: "Department not found or does not belong to the facility" })
+    }
+
+    // Update department
+    try {
+      const updatedDepartment = await db.one(
+        `
+        UPDATE departments SET
+          name = $1,
+          notes = $2,
+          updated_at = NOW(),
+          updated_by = $3
+        WHERE id = $4 AND facility_id = $5
+        RETURNING *
+      `,
+        [name, notes || null, req.user.id, departmentId, facilityId],
+      )
+
+      console.log("Department updated successfully:", updatedDepartment)
+      return res.status(200).json(updatedDepartment)
+    } catch (dbError) {
+      console.error("Database error updating department:", dbError)
+      return res.status(500).json({
+        message: "Database error updating department",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error updating department:", error)
+    return res.status(500).json({ message: "Server error updating department", details: error.message })
+  }
+})
+
+// Delete department
+app.delete("/api/facilities/:facilityId/departments/:departmentId", authenticateToken, async (req, res) => {
+  try {
+    const { facilityId, departmentId } = req.params
+
+    console.log("Deleting department with ID:", departmentId)
+    console.log("For facility ID:", facilityId)
+    console.log("By user:", JSON.stringify(req.user))
+
+    // Check if facility exists
+    const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1", [facilityId])
+    if (!facility) {
+      return res.status(404).json({ message: "Facility not found" })
+    }
+
+    // Check if department exists and belongs to the facility
+    const department = await db.oneOrNone("SELECT id FROM departments WHERE id = $1 AND facility_id = $2", [
+      departmentId,
+      facilityId,
+    ])
+    if (!department) {
+      return res.status(404).json({ message: "Department not found or does not belong to the facility" })
+    }
+
+    // Delete department
+    try {
+      await db.none("DELETE FROM departments WHERE id = $1 AND facility_id = $2", [departmentId, facilityId])
+
+      console.log("Department deleted successfully")
+      return res.status(200).json({ message: "Department deleted successfully" })
+    } catch (dbError) {
+      console.error("Database error deleting department:", dbError)
+      return res.status(500).json({
+        message: "Database error deleting department",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
+  } catch (error) {
+    console.error("Error deleting department:", error)
+    return res.status(500).json({ message: "Server error deleting department", details: error.message })
+  }
+})
+
+// Device Models routes
+app.get("/api/device-models", authenticateToken, async (req, res) => {
+  try {
+    const { device_type } = req.query
+
+    let query = `
+      SELECT dm.id, dm.model_name, dm.device_type, dm.description, dm.specifications, 
+             dm.firmware_version, dm.is_active, m.id as manufacturer_id, m.name as manufacturer
+      FROM device_models dm
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    if (device_type) {
+      query += ` AND dm.device_type = $${paramCount}`
+      queryParams.push(device_type)
+      paramCount++
+    }
+
+    query += ` ORDER BY m.name, dm.model_name`
+
+    const models = await db.manyOrNone(query, queryParams)
+
+    res.json({ data: models })
+  } catch (error) {
+    console.error("Error fetching device models:", error)
+    res.status(500).json({ message: "Server error while fetching device models" })
+  }
+})
+
+app.get("/api/device-models/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const model = await db.oneOrNone(
+      `
+      SELECT dm.id, dm.model_name, dm.device_type, dm.description, dm.specifications, 
+             dm.firmware_version, dm.is_active, m.id as manufacturer_id, m.name as manufacturer
+      FROM device_models dm
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE dm.id = $1
+    `,
+      [id],
+    )
+
+    if (!model) {
+      return res.status(404).json({ message: "Device model not found" })
+    }
+
+    res.json(model)
+  } catch (error) {
+    console.error("Error fetching device model:", error)
+    res.status(500).json({ message: "Server error while fetching device model" })
   }
 })
 
