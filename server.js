@@ -1,48 +1,44 @@
 // Import required modules
-require("dotenv").config()
-const express = require("express")
-const cors = require("cors")
-const helmet = require("helmet")
-const morgan = require("morgan")
-const rateLimit = require("express-rate-limit")
-const jwt = require("jsonwebtoken")
-const bcrypt = require("bcrypt")
-const { v4: uuidv4 } = require("uuid")
-const pgp = require("pg-promise")()
+require("dotenv").config() // Load environment variables from .env file
+const express = require("express") // Express framework for building web applications
+const cors = require("cors") // Middleware for enabling CORS
+const helmet = require("helmet") // Middleware for setting various HTTP headers for security
+const morgan = require("morgan") // Middleware for logging HTTP requests
+const rateLimit = require("express-rate-limit") // Middleware for rate limiting
+const jwt = require("jsonwebtoken") // Library for JSON Web Token (JWT) authentication
+const bcrypt = require("bcrypt") // Library for hashing passwords
+const { v4: uuidv4 } = require("uuid") // Library for generating UUIDs
+const pgp = require("pg-promise")() // Library for PostgreSQL database interaction
 
 // Initialize Express app
 const app = express()
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT || 3001 // Set the port from environment variable or default to 3001
 
 // Create database connection
-const db = pgp(process.env.DATABASE_URL)
+const db = pgp(process.env.DATABASE_URL) // Connect to the PostgreSQL database using the connection string from environment variable
 
-// Initialize pg-promise
-const cn = process.env.DATABASE_URL
-const pool = pgp(cn)
-
-// Middleware
-app.use(helmet()) // Security headers
+// Middleware setup
+app.use(helmet()) // Apply security headers to all requests
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
+    origin: process.env.CORS_ORIGIN || "*", // Allow CORS from specified origin or any origin
+    methods: ["GET", "POST", "PUT", "DELETE"], // Allow these HTTP methods
+    allowedHeaders: ["Content-Type", "Authorization"], // Allow these headers
+  })
 )
-app.use(express.json()) // Parse JSON bodies
-app.use(morgan("dev")) // Logging
+app.use(express.json()) // Parse JSON bodies of incoming requests
+app.use(morgan("dev")) // Log HTTP requests in the 'dev' format
 
-// Rate limiting
+// Rate limiting middleware
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000, // 15 minutes window
+  max: 100, // Limit each IP to 100 requests per window
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 })
-app.use("/api/", apiLimiter)
+app.use("/api/", apiLimiter) // Apply rate limiting to all API routes
 
-// Authentication middleware
+// Authentication middleware to verify JWT tokens
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"]
   const token = authHeader && authHeader.split(" ")[1]
@@ -56,7 +52,7 @@ const authenticateToken = (req, res, next) => {
   })
 }
 
-// Check if user has required role
+// Middleware to check if the user has the required role
 const checkRole = (roles) => {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "Authentication required" })
@@ -67,12 +63,17 @@ const checkRole = (roles) => {
   }
 }
 
-// Routes
+// Define routes
+
+// Root route
 app.get("/", (req, res) => {
   res.json({ message: "Energy Management SaaS API" })
 })
 
-// Auth routes
+//######################################################################Authetication,RBAC and Session Management######################################################################
+// Authentication routes
+
+// Login route
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body
@@ -135,7 +136,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 })
 
-// Password change for first-time login
+// Password change route for first-time login
 app.post("/api/auth/change-password", authenticateToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body
@@ -170,6 +171,7 @@ app.post("/api/auth/change-password", authenticateToken, async (req, res) => {
   }
 })
 
+// Registration route
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { firstName, lastName, email, password, role = "customer" } = req.body
@@ -185,13 +187,12 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(409).json({ message: "Email already in use" })
     }
 
-    // Get role ID - Fixed this part to use db instead of pool
+    // Get role ID
     const roleResult = await db.oneOrNone("SELECT id FROM roles WHERE name = $1", [role])
 
     if (!roleResult) {
       // If role doesn't exist, create a default customer role
       console.log(`Role '${role}' not found, using default role`)
-      // Use a default role ID or create a new role
       const defaultRoleId = 2 // Assuming 2 is the customer role ID
 
       // Insert new user with default role ID
@@ -228,6 +229,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 })
 
+// Token validation route
 app.post("/api/auth/validate-token", async (req, res) => {
   try {
     const { token } = req.body
@@ -253,6 +255,7 @@ app.post("/api/auth/validate-token", async (req, res) => {
   }
 })
 
+// Set new password route
 app.post("/api/auth/set-password", async (req, res) => {
   try {
     const { token, password } = req.body
@@ -290,7 +293,12 @@ app.post("/api/auth/set-password", async (req, res) => {
   }
 })
 
+
+
+//######################################################################SMART METER######################################################################
 // Smart Meters routes
+
+// Get all smart meters
 app.get("/api/smart-meters", authenticateToken, async (req, res) => {
   try {
     const smartMeters = await db.manyOrNone(`
@@ -309,6 +317,7 @@ app.get("/api/smart-meters", authenticateToken, async (req, res) => {
   }
 })
 
+// Create a new smart meter
 app.post("/api/smart-meters", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const {
@@ -354,6 +363,7 @@ app.post("/api/smart-meters", authenticateToken, checkRole(["admin", "operator"]
   }
 })
 
+// Update a smart meter
 app.put("/api/smart-meters/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -409,6 +419,7 @@ app.put("/api/smart-meters/:id", authenticateToken, checkRole(["admin", "operato
   }
 })
 
+// Delete a smart meter
 app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -428,8 +439,11 @@ app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), asy
     return res.status(500).json({ message: "Server error deleting smart meter" })
   }
 })
+//######################################################################Companies######################################################################
 
 // Companies routes
+
+// Get all companies
 app.get("/api/companies", authenticateToken, async (req, res) => {
   try {
     const companies = await db.manyOrNone(`
@@ -450,6 +464,7 @@ app.get("/api/companies", authenticateToken, async (req, res) => {
   }
 })
 
+// Create a new company
 app.post("/api/companies", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const {
@@ -497,6 +512,7 @@ app.post("/api/companies", authenticateToken, checkRole(["admin", "operator"]), 
   }
 })
 
+// Update a company
 app.put("/api/companies/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -564,6 +580,7 @@ app.put("/api/companies/:id", authenticateToken, checkRole(["admin", "operator"]
   }
 })
 
+// Delete a company
 app.delete("/api/companies/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -589,8 +606,11 @@ app.delete("/api/companies/:id", authenticateToken, checkRole(["admin"]), async 
     return res.status(500).json({ message: "Server error deleting company" })
   }
 })
+//######################################################################ASSIGNMENTS######################################################################
 
 // Assignments routes
+
+// Get all assignments
 app.get("/api/assignments", authenticateToken, async (req, res) => {
   try {
     const assignments = await db.manyOrNone(`
@@ -612,6 +632,7 @@ app.get("/api/assignments", authenticateToken, async (req, res) => {
   }
 })
 
+// Create a new assignment
 app.post("/api/assignments", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const { company_id, smart_meter_id, location_details, installation_notes, status } = req.body
@@ -655,6 +676,7 @@ app.post("/api/assignments", authenticateToken, checkRole(["admin", "operator"])
   }
 })
 
+// Update an assignment
 app.put("/api/assignments/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -688,6 +710,7 @@ app.put("/api/assignments/:id", authenticateToken, checkRole(["admin", "operator
   }
 })
 
+// Delete an assignment
 app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -714,7 +737,11 @@ app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), asyn
   }
 })
 
+//######################################################################USER (Customer) Management######################################################################
+
 // Users routes
+
+// Get all users
 app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const users = await db.manyOrNone(`
@@ -731,6 +758,7 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
   }
 })
 
+// Create a new user
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { email, password, first_name, last_name, role, status } = req.body
@@ -772,6 +800,7 @@ app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res)
   }
 })
 
+// Update a user
 app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -807,6 +836,7 @@ app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, r
   }
 })
 
+// Delete a user
 app.delete("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
@@ -922,6 +952,10 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
       paramCount++
     }
 
+
+
+
+
     // Count total
     const countQuery = `SELECT COUNT(*) FROM (${query}) as count_query`
     const countResult = await db.one(countQuery, queryParams)
@@ -963,6 +997,7 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
     res.status(500).json({ message: "Server error while fetching smart meters" })
   }
 })
+//######################################################################Company Modelling######################################################################
 
 // Companies routes with facilities
 app.get("/api/companies-with-facilities", authenticateToken, async (req, res) => {
@@ -1026,6 +1061,7 @@ app.get("/api/facilities/:id/departments", authenticateToken, async (req, res) =
     res.status(500).json({ message: "Server error while fetching departments" })
   }
 })
+//######################################################################Subscription######################################################################
 
 // Subscription routes
 app.get("/api/subscription-plans", authenticateToken, async (req, res) => {
@@ -1090,11 +1126,21 @@ app.get("/api/subscriptions", authenticateToken, async (req, res) => {
   }
 })
 
+
+
+
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack)
   res.status(500).json({ message: "Something went wrong!" })
 })
+
+
+
+
+
+
 
 // Start server
 app.listen(PORT, () => {
