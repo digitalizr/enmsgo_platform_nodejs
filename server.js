@@ -43,11 +43,20 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"]
   const token = authHeader && authHeader.split(" ")[1]
 
+  console.log("Auth header:", authHeader)
+  console.log("Token:", token ? token.substring(0, 20) + "..." : "No token")
+
   if (!token) return res.status(401).json({ message: "Authentication required" })
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: "Invalid or expired token" })
+    if (err) {
+      console.error("Token verification error:", err)
+      return res.status(403).json({ message: "Invalid or expired token" })
+    }
+
+    // Add the decoded user info to the request
     req.user = user
+    console.log("Authenticated user:", JSON.stringify(req.user))
     next()
   })
 }
@@ -56,9 +65,30 @@ const authenticateToken = (req, res, next) => {
 const checkRole = (roles) => {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "Authentication required" })
-    if (!roles.includes(req.user.role)) {
+
+    console.log("Checking roles:", {
+      userRole: req.user.role,
+      userRoleId: req.user.role_id,
+      requiredRoles: roles,
+    }) // Debug log
+
+    // Check if user has one of the required roles
+    // Check both role name and role_id
+    const hasRequiredRole =
+      // Check by role name if available
+      (req.user.role && roles.includes(req.user.role.toLowerCase())) ||
+      // Check by role_id if available
+      (req.user.role_id && roles.includes(req.user.role_id)) ||
+      // Check admin role_id specifically
+      req.user.role_id === "615b2efa-ea1b-44b5-8753-04dc5cf29b84" ||
+      // Check if user is an admin by role name
+      (req.user.role && req.user.role.toLowerCase() === "admin")
+
+    if (!hasRequiredRole) {
+      console.log("Access denied for user:", req.user) // Debug log
       return res.status(403).json({ message: "Access denied: Insufficient permissions" })
     }
+
     next()
   }
 }
@@ -442,8 +472,6 @@ app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), asy
 //######################################################################Companies######################################################################
 
 // Companies routes
-
-// Get all companies
 app.get("/api/companies", authenticateToken, async (req, res) => {
   try {
     const companies = await db.manyOrNone(`
@@ -464,51 +492,142 @@ app.get("/api/companies", authenticateToken, async (req, res) => {
   }
 })
 
-// Create a new company
 app.post("/api/companies", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
     const {
       name,
-      industry,
-      address,
-      city,
-      state,
-      postal_code,
-      country,
+      industry = null,
+      address = null,
+      city = null,
+      state = null,
+      postal_code = null,
+      country = null,
       contact_name,
       contact_email,
-      contact_phone,
-      status,
+      contact_phone = null,
+      status = "active",
     } = req.body
 
-    // Insert new company
-    const newCompany = await db.one(
-      `
-      INSERT INTO companies (
-        name, industry, address, city, state, postal_code, country,
-        contact_name, contact_email, contact_phone, status, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
-    `,
-      [
-        name,
-        industry,
-        address,
-        city,
-        state,
-        postal_code,
-        country,
-        contact_name,
-        contact_email,
-        contact_phone,
-        status || "active",
-        req.user.id,
-      ],
-    )
+    // Validate required fields
+    if (!name || !contact_name || !contact_email) {
+      return res.status(400).json({ message: "Name, contact name, and contact email are required" })
+    }
 
-    return res.status(201).json(newCompany)
+    // Check if the companies table exists
+    try {
+      await db.one("SELECT 1 FROM information_schema.tables WHERE table_name = $1", ["companies"])
+    } catch (error) {
+      console.error("Companies table does not exist:", error)
+      return res.status(500).json({ message: "Database schema error: companies table not found" })
+    }
+
+    // Check if the user exists
+    try {
+      const userExists = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [req.user.id])
+      if (!userExists) {
+        console.error("User not found:", req.user.id)
+        return res.status(400).json({ message: "Invalid user ID" })
+      }
+    } catch (error) {
+      console.error("Error checking user:", error)
+      return res.status(500).json({ message: "Error validating user" })
+    }
+
+    // Insert new company with simplified query
+    try {
+      const newCompany = await db.one(
+        `
+        INSERT INTO companies (
+          name, contact_name, contact_email, contact_phone, status, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+        `,
+        [name, contact_name, contact_email, contact_phone, status, req.user.id],
+      )
+
+      console.log("Company created successfully:", newCompany)
+      return res.status(201).json(newCompany)
+    } catch (dbError) {
+      console.error("Database error creating company:", dbError)
+      return res.status(500).json({
+        message: "Database error creating company",
+        details: dbError.message,
+        code: dbError.code,
+      })
+    }
   } catch (error) {
     console.error("Error creating company:", error)
-    return res.status(500).json({ message: "Server error creating company" })
+    return res.status(500).json({ message: "Server error creating company", details: error.message })
+  }
+})
+
+app.get("/api/companies", authenticateToken, async (req, res) => {
+  try {
+    // Get query parameters for filtering
+    const { status, search } = req.query
+
+    // Base query to get companies with creator info
+    let query = `
+      SELECT c.*, 
+             u.first_name || ' ' || u.last_name as created_by_name
+      FROM companies c
+      LEFT JOIN users u ON c.created_by = u.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    // Add filters if provided
+    if (status && status !== "all") {
+      query += ` AND c.status = $${paramCount}`
+      queryParams.push(status)
+      paramCount++
+    }
+
+    if (search) {
+      query += ` AND (c.name ILIKE $${paramCount} OR c.contact_name ILIKE $${paramCount} OR c.contact_email ILIKE $${paramCount})`
+      queryParams.push(`%${search}%`)
+      paramCount++
+    }
+
+    query += ` ORDER BY c.created_at DESC`
+
+    // Execute the query
+    const companies = await db.manyOrNone(query, queryParams)
+
+    // For each company, get its facilities
+    for (const company of companies) {
+      // Get facilities for this company
+      const facilities = await db.manyOrNone(
+        `
+        SELECT * FROM facilities 
+        WHERE company_id = $1
+        ORDER BY name
+      `,
+        [company.id],
+      )
+
+      // For each facility, get its departments
+      for (const facility of facilities) {
+        const departments = await db.manyOrNone(
+          `
+          SELECT * FROM departments
+          WHERE facility_id = $1
+          ORDER BY name
+        `,
+          [facility.id],
+        )
+
+        facility.departments = departments
+      }
+
+      company.facilities = facilities
+    }
+
+    return res.status(200).json(companies)
+  } catch (error) {
+    console.error("Error fetching companies:", error)
+    return res.status(500).json({ message: "Server error fetching companies" })
   }
 })
 
