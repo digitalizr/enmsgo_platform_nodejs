@@ -1160,20 +1160,21 @@ app.get("/api/assignments", authenticateToken, async (req, res) => {
   try {
     const assignments = await db.manyOrNone(`
       SELECT a.*,
-             c.name as company_name,
-             sm.serial_number as meter_serial_number,
-             u.first_name || ' ' || u.last_name as created_by_name
+             c.name AS company_name,
+             sm.serial_number AS meter_serial_number,
+             u.first_name || ' ' || u.last_name AS created_by_name
       FROM assignments a
       JOIN companies c ON a.company_id = c.id
-      JOIN smart_meters sm ON a.smart_meter_id = sm.id
+      LEFT JOIN smart_meter_assignments sma ON a.id = sma.assignment_id
+      LEFT JOIN smart_meters sm ON sma.smart_meter_id = sm.id
       LEFT JOIN users u ON a.created_by = u.id
       ORDER BY a.created_at DESC
-    `)
+    `);
 
-    return res.status(200).json(assignments)
+    return res.status(200).json(assignments);
   } catch (error) {
-    console.error("Error fetching assignments:", error)
-    return res.status(500).json({ message: "Server error fetching assignments" })
+    console.error("Error fetching assignments:", error);
+    return res.status(500).json({ message: "Server error fetching assignments", details: error.message });
   }
 })
 
