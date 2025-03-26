@@ -467,7 +467,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     const { status, manufacturer, search, limit = 10, offset = 0 } = req.query
 
     let query = `
-      SELECT eg.*, dm.id as model_id, dm.name as model_name, m.name as manufacturer_name
+      SELECT eg.*, dm.id as model_id, dm.model_name, m.name as manufacturer_name
       FROM edge_gateways eg
       LEFT JOIN device_models dm ON eg.model_id = dm.id
       LEFT JOIN manufacturers m ON dm.manufacturer_id = m.id
@@ -490,7 +490,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     }
 
     if (search) {
-      query += ` AND (eg.serial_number ILIKE $${paramCount} OR dm.name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
+      query += ` AND (eg.serial_number ILIKE $${paramCount} OR dm.model_name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
       queryParams.push(`%${search}%`)
       paramCount++
     }
@@ -517,7 +517,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     })
   } catch (error) {
     console.error("Error fetching edge gateways:", error)
-    return res.status(500).json({ message: "Server error fetching edge gateways" })
+    return res.status(500).json({ message: "Server error fetching edge gateways", details: error.message })
   }
 })
 
@@ -1330,7 +1330,8 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
     return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
-    return res.status(500).json({ message: "Server error fetching users" })
+    //return res.status(500).json({ message: "Server error fetching users" })
+    return res.status(500).json({ message: "Server error fetching edge gateways", details: error.message })
   }
 })
 
@@ -2083,6 +2084,86 @@ app.get("/api/device-models/:id", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error fetching device model:", error)
     res.status(500).json({ message: "Server error while fetching device model" })
+  }
+})
+
+// Add these routes after the device models routes
+
+// Manufacturers routes
+app.get("/api/manufacturers", authenticateToken, async (req, res) => {
+  try {
+    const manufacturers = await db.manyOrNone("SELECT * FROM manufacturers ORDER BY name")
+    return res.status(200).json({ data: manufacturers })
+  } catch (error) {
+    console.error("Error fetching manufacturers:", error)
+    return res.status(500).json({ message: "Server error fetching manufacturers" })
+  }
+})
+
+app.get("/api/manufacturers/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const manufacturer = await db.oneOrNone("SELECT * FROM manufacturers WHERE id = $1", [id])
+
+    if (!manufacturer) {
+      return res.status(404).json({ message: "Manufacturer not found" })
+    }
+
+    return res.status(200).json(manufacturer)
+  } catch (error) {
+    console.error("Error fetching manufacturer:", error)
+    return res.status(500).json({ message: "Server error fetching manufacturer" })
+  }
+})
+
+app.get("/api/manufacturers/:id/models", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const models = await db.manyOrNone(
+      `SELECT dm.* 
+       FROM device_models dm
+       WHERE dm.manufacturer_id = $1
+       ORDER BY dm.model_name`,
+      [id],
+    )
+
+    return res.status(200).json({ data: models })
+  } catch (error) {
+    console.error("Error fetching manufacturer models:", error)
+    return res.status(500).json({ message: "Server error fetching manufacturer models" })
+  }
+})
+
+// Update the device-models endpoint to include manufacturer information
+app.get("/api/device-models", authenticateToken, async (req, res) => {
+  try {
+    const { device_type } = req.query
+
+    let query = `
+      SELECT dm.id, dm.model_name, dm.device_type, dm.description, dm.specifications, 
+             dm.firmware_version, dm.is_active, m.id as manufacturer_id, m.name as manufacturer
+      FROM device_models dm
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    if (device_type) {
+      query += ` AND dm.device_type = $${paramCount}`
+      queryParams.push(device_type)
+      paramCount++
+    }
+
+    query += ` ORDER BY m.name, dm.model_name`
+
+    const models = await db.manyOrNone(query, queryParams)
+
+    res.json({ data: models })
+  } catch (error) {
+    console.error("Error fetching device models:", error)
+    res.status(500).json({ message: "Server error while fetching device models" })
   }
 })
 
