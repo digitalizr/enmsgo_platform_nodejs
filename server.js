@@ -1283,30 +1283,30 @@ app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), asyn
 app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const users = await db.manyOrNone(`
-      SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.status, 
-             u.created_at, u.updated_at, u.require_password_change, u.last_login_at,
-             c.id as company_id, c.name as company_name,
-             f.id as facility_id, f.name as facility_name,
-             d.id as department_id, d.name as department_name
+      SELECT u.id, u.email, u.first_name, u.last_name, u.role_id, u.is_active, 
+             u.created_at, u.updated_at, u.require_password_change, u.last_login,
+             uc.company_id, c.name AS company_name,
+             uc.facility_id, f.name AS facility_name,
+             uc.department_id, d.name AS department_name
       FROM users u
-      LEFT JOIN companies c ON u.company_id = c.id
-      LEFT JOIN facilities f ON u.facility_id = f.id
-      LEFT JOIN departments d ON u.department_id = d.id
+      LEFT JOIN user_companies uc ON u.id = uc.user_id
+      LEFT JOIN companies c ON uc.company_id = c.id
+      LEFT JOIN facilities f ON uc.facility_id = f.id
+      LEFT JOIN departments d ON uc.department_id = d.id
       ORDER BY u.created_at DESC
-    `)
+    `);
 
-    // Format the response
     const formattedUsers = users.map((user) => ({
       id: user.id,
       email: user.email,
       first_name: user.first_name,
       last_name: user.last_name,
-      role: user.role,
-      is_active: user.status === "active",
+      role_id: user.role_id,
+      is_active: user.is_active,
       created_at: user.created_at,
       updated_at: user.updated_at,
       require_password_change: user.require_password_change,
-      last_login_at: user.last_login_at,
+      last_login: user.last_login,
       company: user.company_id
         ? {
             id: user.company_id,
@@ -1325,15 +1325,14 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
             name: user.department_name,
           }
         : null,
-    }))
+    }));
 
-    return res.status(200).json({ data: formattedUsers })
+    return res.status(200).json({ data: formattedUsers });
   } catch (error) {
-    console.error("Error fetching users:", error)
-    //return res.status(500).json({ message: "Server error fetching users" })
-    return res.status(500).json({ message: "Server error fetching edge gateways", details: error.message })
+    console.error("Error fetching users:", error);
+    return res.status(500).json({ message: "Server error fetching users", details: error.message });
   }
-})
+});
 
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
