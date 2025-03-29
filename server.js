@@ -1447,18 +1447,20 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
 
     // To this updated query that uses user_companies table for the relationship:
     const users = await db.manyOrNone(`
-      SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.status, 
-             u.created_at, u.updated_at, u.require_password_change, u.last_login,
-             c.id as company_id, c.name as company_name,
-             f.id as facility_id, f.name as facility_name,
-             d.id as department_id, d.name as department_name
-      FROM users u
-      LEFT JOIN user_companies uc ON u.id = uc.user_id
-      LEFT JOIN companies c ON uc.company_id = c.id
-      LEFT JOIN facilities f ON uc.facility_id = f.id
-      LEFT JOIN departments d ON uc.department_id = d.id
-      ORDER BY u.created_at DESC
-    `)
+  SELECT u.id, u.email, u.first_name, u.last_name, r.name as role, 
+         u.is_active as status, u.created_at, u.updated_at, 
+         u.require_password_change, u.last_login,
+         c.id as company_id, c.name as company_name,
+         f.id as facility_id, f.name as facility_name,
+         d.id as department_id, d.name as department_name
+  FROM users u
+  LEFT JOIN roles r ON u.role_id = r.id
+  LEFT JOIN user_companies uc ON u.id = uc.user_id
+  LEFT JOIN companies c ON uc.company_id = c.id
+  LEFT JOIN facilities f ON uc.facility_id = f.id
+  LEFT JOIN departments d ON uc.department_id = d.id
+  ORDER BY u.created_at DESC
+`)
 
     // Format the response
     const formattedUsers = users.map((user) => ({
@@ -1495,8 +1497,7 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
     return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
-    return res.status(500).json({ message: "Server error fetching users" , error: error.message
-    })
+    return res.status(500).json({ message: "Server error fetching users" })
   }
 })
 
@@ -2480,4 +2481,96 @@ app.listen(PORT, () => {
 })
 
 module.exports = app
+
+// Update the API endpoints for companies, facilities, and departments to ensure they return data in a consistent format
+
+// Companies routes with facilities
+app.get("/api/companies", authenticateToken, async (req, res) => {
+  try {
+    // Get query parameters for filtering
+    const { status, search } = req.query
+
+    // Base query to get companies with creator info
+    let query = `
+      SELECT c.*, 
+             u.first_name || ' ' || u.last_name as created_by_name
+      FROM companies c
+      LEFT JOIN users u ON c.created_by = u.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    // Add filters if provided
+    if (status && status !== "all") {
+      query += ` AND c.status = $${paramCount}`
+      queryParams.push(status)
+      paramCount++
+    }
+
+    if (search) {
+      query += ` AND (c.name ILIKE $${paramCount} OR c.contact_name ILIKE $${paramCount} OR c.contact_email ILIKE $${paramCount})`
+      queryParams.push(`%${search}%`)
+      paramCount++
+    }
+
+    query += ` ORDER BY c.created_at DESC`
+
+    // Execute the query
+    const companies = await db.manyOrNone(query, queryParams)
+    console.log(`Found ${companies.length} companies`)
+
+    return res.status(200).json(companies)
+  } catch (error) {
+    console.error("Error fetching companies:", error)
+    return res.status(500).json({ message: "Server error fetching companies" })
+  }
+})
+
+app.get("/api/companies/:id/facilities", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    console.log(`Fetching facilities for company ID: ${id}`)
+
+    const result = await db.manyOrNone(
+      `
+      SELECT id, name, location, address, contact_name, contact_email, contact_phone, notes
+      FROM facilities
+      WHERE company_id = $1
+      ORDER BY name
+    `,
+      [id],
+    )
+
+    console.log(`Found ${result.length} facilities for company ${id}`)
+    return res.status(200).json({ data: result })
+  } catch (error) {
+    console.error("Error fetching facilities:", error)
+    return res.status(500).json({ message: "Server error while fetching facilities" })
+  }
+})
+
+app.get("/api/facilities/:id/departments", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    console.log(`Fetching departments for facility ID: ${id}`)
+
+    const result = await db.manyOrNone(
+      `
+      SELECT id, name, notes
+      FROM departments
+      WHERE facility_id = $1
+      ORDER BY name
+    `,
+      [id],
+    )
+
+    console.log(`Found ${result.length} departments for facility ${id}`)
+    return res.status(200).json({ data: result })
+  } catch (error) {
+    console.error("Error fetching departments:", error)
+    return res.status(500).json({ message: "Server error while fetching departments" })
+  }
+})
 
