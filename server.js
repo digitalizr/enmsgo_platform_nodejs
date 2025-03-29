@@ -321,35 +321,96 @@ app.post("/api/auth/set-password", async (req, res) => {
 })
 
 // Smart Meters routes
-app.get("/api/smart-meters", authenticateToken, async (req, res) => {
+app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
   try {
-    const smartMeters = await db.manyOrNone(`
-      SELECT sm.*, m.name as manufacturer_name, m.id as manufacturer_id, 
-             mm.name as model_name, mm.id as model_id
-      FROM smart_meters sm
-      LEFT JOIN manufacturers m ON sm.manufacturer_id = m.id
-      LEFT JOIN meter_models mm ON sm.model_id = mm.id
-      ORDER BY sm.created_at DESC
-    `)
+    const { status, manufacturer, search, limit = 10, offset = 0 } = req.query
 
-    return res.status(200).json(smartMeters)
+    let query = `
+      SELECT sm.id, sm.serial_number, sm.status, sm.firmware_version, sm.last_seen, sm.notes,
+             dm.id as model_id, dm.model_name, m.name as manufacturer,
+             sma.id as assignment_id, c.id as company_id, c.name as company_name
+      FROM smart_meters sm
+      JOIN device_models dm ON sm.model_id = dm.id
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      LEFT JOIN smart_meter_assignments sma ON sm.id = sma.smart_meter_id
+      LEFT JOIN assignments a ON sma.assignment_id = a.id
+      LEFT JOIN companies c ON a.company_id = c.id
+      WHERE 1=1
+    `
+
+    const queryParams = []
+    let paramCount = 1
+
+    if (status && status !== "all") {
+      query += ` AND sm.status = $${paramCount}`
+      queryParams.push(status)
+      paramCount++
+    }
+
+    if (manufacturer) {
+      query += ` AND m.id = $${paramCount}`
+      queryParams.push(manufacturer)
+      paramCount++
+    }
+
+    if (search) {
+      query += ` AND (sm.serial_number ILIKE $${paramCount} OR dm.model_name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
+      queryParams.push(`%${search}%`)
+      paramCount++
+    }
+
+    // Count total
+    const countQuery = `SELECT COUNT(*) FROM (${query}) as count_query`
+    const countResult = await db.one(countQuery, queryParams)
+    const total = Number.parseInt(countResult.count)
+
+    // Add pagination
+    query += ` ORDER BY sm.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`
+    queryParams.push(limit, offset)
+
+    const result = await db.manyOrNone(query, queryParams)
+
+    const smartMeters = result.map((meter) => ({
+      id: meter.id,
+      serial_number: meter.serial_number,
+      model: {
+        id: meter.model_id,
+        model_name: meter.model_name,
+        manufacturer: meter.manufacturer,
+      },
+      status: meter.status,
+      firmware_version: meter.firmware_version,
+      last_seen: meter.last_seen,
+      notes: meter.notes,
+      assigned: !!meter.assignment_id,
+      assignedTo: meter.company_name || null,
+    }))
+
+    res.json({
+      data: smartMeters,
+      pagination: {
+        total,
+        limit: Number.parseInt(limit),
+        offset: Number.parseInt(offset),
+        pages: Math.ceil(total / limit),
+      },
+    })
   } catch (error) {
     console.error("Error fetching smart meters:", error)
-    return res.status(500).json({ message: "Server error fetching smart meters" })
+    res.status(500).json({
+      message: "Server error while fetching smart meters",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
-app.post("/api/smart-meters", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+app.post("/api/devices/smart-meters", authenticateToken, async (req, res) => {
   try {
-    const {
-      serial_number,
-      manufacturer_id,
-      model_id,
-      installation_date,
-      firmware_version,
-      communication_protocol,
-      status,
-    } = req.body
+    const { serial_number, manufacturer_id, model_id, firmware_version, communication_protocol, status, notes } =
+      req.body
+
+    console.log("Creating smart meter with data:", req.body)
 
     // Check if serial number already exists
     const existing = await db.oneOrNone("SELECT id FROM smart_meters WHERE serial_number = $1", [serial_number])
@@ -361,41 +422,57 @@ app.post("/api/smart-meters", authenticateToken, checkRole(["admin", "operator"]
     const newSmartMeter = await db.one(
       `
       INSERT INTO smart_meters (
-        serial_number, manufacturer_id, model_id, installation_date, 
-        firmware_version, communication_protocol, status, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
+        serial_number, model_id, firmware_version, status, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
     `,
-      [
-        serial_number,
-        manufacturer_id,
-        model_id,
-        installation_date || null,
-        firmware_version,
-        communication_protocol,
-        status || "available",
-        req.user.id,
-      ],
+      [serial_number, model_id, firmware_version || null, status || "available", notes || null, req.user.id],
     )
 
+    console.log("Smart meter created successfully:", newSmartMeter)
     return res.status(201).json(newSmartMeter)
   } catch (error) {
     console.error("Error creating smart meter:", error)
-    return res.status(500).json({ message: "Server error creating smart meter" })
+    return res.status(500).json({
+      message: "Server error creating smart meter",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
-app.put("/api/smart-meters/:id", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+app.get("/api/devices/smart-meters/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const {
-      serial_number,
-      manufacturer_id,
-      model_id,
-      installation_date,
-      firmware_version,
-      communication_protocol,
-      status,
-    } = req.body
+    const smartMeter = await db.oneOrNone(
+      `
+      SELECT sm.*, dm.model_name, m.name as manufacturer_name
+      FROM smart_meters sm
+      JOIN device_models dm ON sm.model_id = dm.id
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      WHERE sm.id = $1
+    `,
+      [id],
+    )
+
+    if (!smartMeter) {
+      return res.status(404).json({ message: "Smart meter not found" })
+    }
+
+    return res.status(200).json(smartMeter)
+  } catch (error) {
+    console.error("Error fetching smart meter:", error)
+    return res.status(500).json({
+      message: "Server error fetching smart meter",
+      details: error.message,
+      stack: error.stack,
+    })
+  }
+})
+
+app.put("/api/devices/smart-meters/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { serial_number, model_id, firmware_version, status, notes } = req.body
 
     // Check if smart meter exists
     const smartMeter = await db.oneOrNone("SELECT id FROM smart_meters WHERE id = $1", [id])
@@ -408,38 +485,30 @@ app.put("/api/smart-meters/:id", authenticateToken, checkRole(["admin", "operato
       `
       UPDATE smart_meters SET
         serial_number = $1,
-        manufacturer_id = $2,
-        model_id = $3,
-        installation_date = $4,
-        firmware_version = $5,
-        communication_protocol = $6,
-        status = $7,
+        model_id = $2,
+        firmware_version = $3,
+        status = $4,
+        notes = $5,
         updated_at = NOW(),
-        updated_by = $8
-      WHERE id = $9
+        updated_by = $6
+      WHERE id = $7
       RETURNING *
     `,
-      [
-        serial_number,
-        manufacturer_id,
-        model_id,
-        installation_date || null,
-        firmware_version,
-        communication_protocol,
-        status,
-        req.user.id,
-        id,
-      ],
+      [serial_number, model_id, firmware_version || null, status || "available", notes || null, req.user.id, id],
     )
 
     return res.status(200).json(updatedSmartMeter)
   } catch (error) {
     console.error("Error updating smart meter:", error)
-    return res.status(500).json({ message: "Server error updating smart meter" })
+    return res.status(500).json({
+      message: "Server error updating smart meter",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
-app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
+app.delete("/api/devices/smart-meters/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
 
@@ -455,7 +524,11 @@ app.delete("/api/smart-meters/:id", authenticateToken, checkRole(["admin"]), asy
     return res.status(200).json({ message: "Smart meter deleted successfully" })
   } catch (error) {
     console.error("Error deleting smart meter:", error)
-    return res.status(500).json({ message: "Server error deleting smart meter" })
+    return res.status(500).json({
+      message: "Server error deleting smart meter",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
@@ -467,7 +540,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     const { status, manufacturer, search, limit = 10, offset = 0 } = req.query
 
     let query = `
-      SELECT eg.*, dm.id as model_id, dm.model_name, m.name as manufacturer_name
+      SELECT eg.*, dm.id as model_id, dm.model_name, m.name as manufacturer_name, m.id as manufacturer_id
       FROM edge_gateways eg
       LEFT JOIN device_models dm ON eg.model_id = dm.id
       LEFT JOIN manufacturers m ON dm.manufacturer_id = m.id
@@ -490,7 +563,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     }
 
     if (search) {
-      query += ` AND (eg.serial_number ILIKE $${paramCount} OR dm.model_name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
+      query += ` AND (eg.serial_number ILIKE $${paramCount} OR dm.name ILIKE $${paramCount} OR m.name ILIKE $${paramCount})`
       queryParams.push(`%${search}%`)
       paramCount++
     }
@@ -517,7 +590,7 @@ app.get("/api/devices/edge-gateways", authenticateToken, async (req, res) => {
     })
   } catch (error) {
     console.error("Error fetching edge gateways:", error)
-    return res.status(500).json({ message: "Server error fetching edge gateways", details: error.message })
+    return res.status(500).json({ message: "Server error fetching edge gateways" })
   }
 })
 
@@ -561,7 +634,7 @@ app.get("/api/devices/edge-gateways/:id", authenticateToken, async (req, res) =>
     const { id } = req.params
     const edgeGateway = await db.oneOrNone(
       `
-      SELECT eg.*, dm.name as model_name, m.name as manufacturer_name
+      SELECT eg.*, dm.name as model_name, m.name as manufacturer_name, m.id as manufacturer_id
       FROM edge_gateways eg
       LEFT JOIN device_models dm ON eg.model_id = dm.id
       LEFT JOIN manufacturers m ON dm.manufacturer_id = m.id
@@ -607,7 +680,16 @@ app.put("/api/devices/edge-gateways/:id", authenticateToken, checkRole(["admin",
       WHERE id = $8
       RETURNING *
     `,
-      [serial_number, model_id, mac_address || null, firmware_version || null, status, notes || null, req.user.id, id],
+      [
+        serial_number,
+        model_id,
+        mac_address || null,
+        firmware_version || null,
+        status || "available",
+        notes || null,
+        req.user.id,
+        id,
+      ],
     )
 
     return res.status(200).json(updatedEdgeGateway)
@@ -1160,27 +1242,61 @@ app.get("/api/assignments", authenticateToken, async (req, res) => {
   try {
     const assignments = await db.manyOrNone(`
       SELECT a.*,
-             c.name AS company_name,
-             sm.serial_number AS meter_serial_number,
-             u.first_name || ' ' || u.last_name AS created_by_name
+             c.name as company_name,
+             f.name as facility_name,
+             d.name as department_name,
+             eg.serial_number as edge_gateway_serial,
+             u.first_name || ' ' || u.last_name as created_by_name
       FROM assignments a
       JOIN companies c ON a.company_id = c.id
-      LEFT JOIN smart_meter_assignments sma ON a.id = sma.assignment_id
-      LEFT JOIN smart_meters sm ON sma.smart_meter_id = sm.id
+      LEFT JOIN facilities f ON a.facility_id = f.id
+      LEFT JOIN departments d ON a.department_id = d.id
+      LEFT JOIN edge_gateways eg ON a.edge_gateway_id = eg.id
       LEFT JOIN users u ON a.created_by = u.id
       ORDER BY a.created_at DESC
-    `);
+    `)
 
-    return res.status(200).json(assignments);
+    // For each assignment, get its smart meters
+    for (const assignment of assignments) {
+      const smartMeters = await db.manyOrNone(
+        `
+        SELECT sm.id, sm.serial_number, sm.status, sm.firmware_version,
+               dm.model_name, m.name as manufacturer_name
+        FROM smart_meter_assignments sma
+        JOIN smart_meters sm ON sma.smart_meter_id = sm.id
+        JOIN device_models dm ON sm.model_id = dm.id
+        JOIN manufacturers m ON dm.manufacturer_id = m.id
+        WHERE sma.assignment_id = $1
+      `,
+        [assignment.id],
+      )
+
+      assignment.smart_meters = smartMeters
+    }
+
+    return res.status(200).json(assignments)
   } catch (error) {
-    console.error("Error fetching assignments:", error);
-    return res.status(500).json({ message: "Server error fetching assignments", details: error.message });
+    console.error("Error fetching assignments:", error)
+    return res.status(500).json({
+      message: "Server error fetching assignments",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
 app.post("/api/assignments", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
   try {
-    const { company_id, smart_meter_id, location_details, installation_notes, status } = req.body
+    const {
+      company_id,
+      smart_meter_id,
+      facility_id,
+      department_id,
+      edge_gateway_id,
+      location_details,
+      installation_notes,
+      status,
+    } = req.body
 
     // Check if company exists
     const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [company_id])
@@ -1189,13 +1305,15 @@ app.post("/api/assignments", authenticateToken, checkRole(["admin", "operator"])
     }
 
     // Check if smart meter exists and is available
-    const smartMeter = await db.oneOrNone("SELECT id, status FROM smart_meters WHERE id = $1", [smart_meter_id])
-    if (!smartMeter) {
-      return res.status(404).json({ message: "Smart meter not found" })
-    }
+    if (smart_meter_id) {
+      const smartMeter = await db.oneOrNone("SELECT id, status FROM smart_meters WHERE id = $1", [smart_meter_id])
+      if (!smartMeter) {
+        return res.status(404).json({ message: "Smart meter not found" })
+      }
 
-    if (smartMeter.status !== "available") {
-      return res.status(409).json({ message: "Smart meter is not available for assignment" })
+      if (smartMeter.status !== "available") {
+        return res.status(409).json({ message: "Smart meter is not available for assignment" })
+      }
     }
 
     // Start a transaction
@@ -1204,20 +1322,36 @@ app.post("/api/assignments", authenticateToken, checkRole(["admin", "operator"])
       const newAssignment = await t.one(
         `
         INSERT INTO assignments (
-          company_id, smart_meter_id, location_details, installation_notes, status, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+          company_id, facility_id, department_id, edge_gateway_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5) RETURNING *
       `,
-        [company_id, smart_meter_id, location_details, installation_notes, status || "active", req.user.id],
+        [company_id, facility_id || null, department_id || null, edge_gateway_id || null, req.user.id],
       )
 
-      // Update smart meter status
-      await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["assigned", smart_meter_id])
+      // If smart meter is provided, create smart meter assignment
+      if (smart_meter_id) {
+        await t.one(
+          `
+          INSERT INTO smart_meter_assignments (
+            assignment_id, smart_meter_id, created_by
+          ) VALUES ($1, $2, $3) RETURNING id
+        `,
+          [newAssignment.id, smart_meter_id, req.user.id],
+        )
+
+        // Update smart meter status
+        await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["assigned", smart_meter_id])
+      }
 
       return res.status(201).json(newAssignment)
     })
   } catch (error) {
     console.error("Error creating assignment:", error)
-    return res.status(500).json({ message: "Server error creating assignment" })
+    return res.status(500).json({
+      message: "Server error creating assignment",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
@@ -1259,55 +1393,85 @@ app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), asyn
     const { id } = req.params
 
     // Check if assignment exists
-    const assignment = await db.oneOrNone("SELECT id, smart_meter_id FROM assignments WHERE id = $1", [id])
+    const assignment = await db.oneOrNone("SELECT id FROM assignments WHERE id = $1", [id])
     if (!assignment) {
       return res.status(404).json({ message: "Assignment not found" })
     }
 
     // Start a transaction
     return await db.tx(async (t) => {
+      // Get any smart meters assigned to this assignment
+      const smartMeterAssignments = await t.manyOrNone(
+        "SELECT smart_meter_id FROM smart_meter_assignments WHERE assignment_id = $1",
+        [id],
+      )
+
+      // Update smart meter status back to available for all assigned smart meters
+      for (const sma of smartMeterAssignments) {
+        await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["available", sma.smart_meter_id])
+      }
+
+      // Delete smart meter assignments
+      await t.none("DELETE FROM smart_meter_assignments WHERE assignment_id = $1", [id])
+
       // Delete assignment
       await t.none("DELETE FROM assignments WHERE id = $1", [id])
-
-      // Update smart meter status back to available
-      await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["available", assignment.smart_meter_id])
 
       return res.status(200).json({ message: "Assignment deleted successfully" })
     })
   } catch (error) {
     console.error("Error deleting assignment:", error)
-    return res.status(500).json({ message: "Server error deleting assignment" })
+    return res.status(500).json({
+      message: "Server error deleting assignment",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
 // Users routes
 app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
+    // Find the users route that's causing the error
+    // Change this SQL query:
+    // SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.status,
+    //        u.created_at, u.updated_at, u.require_password_change, u.last_login_at,
+    //        c.id as company_id, c.name as company_name,
+    //        f.id as facility_id, f.name as facility_name,
+    //        d.id as department_id, d.name as department_name
+    // FROM users u
+    // LEFT JOIN companies c ON u.company_id = c.id
+    // LEFT JOIN facilities f ON u.facility_id = f.id
+    // LEFT JOIN departments d ON u.department_id = d.id
+    // ORDER BY u.created_at DESC
+
+    // To this updated query that uses user_companies table for the relationship:
     const users = await db.manyOrNone(`
-      SELECT u.id, u.email, u.first_name, u.last_name, u.role_id, u.is_active, 
+      SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.status, 
              u.created_at, u.updated_at, u.require_password_change, u.last_login,
-             uc.company_id, c.name AS company_name,
-             uc.facility_id, f.name AS facility_name,
-             uc.department_id, d.name AS department_name
+             c.id as company_id, c.name as company_name,
+             f.id as facility_id, f.name as facility_name,
+             d.id as department_id, d.name as department_name
       FROM users u
       LEFT JOIN user_companies uc ON u.id = uc.user_id
       LEFT JOIN companies c ON uc.company_id = c.id
       LEFT JOIN facilities f ON uc.facility_id = f.id
       LEFT JOIN departments d ON uc.department_id = d.id
       ORDER BY u.created_at DESC
-    `);
+    `)
 
+    // Format the response
     const formattedUsers = users.map((user) => ({
       id: user.id,
       email: user.email,
       first_name: user.first_name,
       last_name: user.last_name,
-      role_id: user.role_id,
-      is_active: user.is_active,
+      role: user.role,
+      is_active: user.status === "active",
       created_at: user.created_at,
       updated_at: user.updated_at,
       require_password_change: user.require_password_change,
-      last_login: user.last_login,
+      last_login_at: user.last_login,
       company: user.company_id
         ? {
             id: user.company_id,
@@ -1326,14 +1490,15 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
             name: user.department_name,
           }
         : null,
-    }));
+    }))
 
-    return res.status(200).json({ data: formattedUsers });
+    return res.status(200).json({ data: formattedUsers })
   } catch (error) {
-    console.error("Error fetching users:", error);
-    return res.status(500).json({ message: "Server error fetching users", details: error.message });
+    console.error("Error fetching users:", error)
+    return res.status(500).json({ message: "Server error fetching users" , error: error.message
+    })
   }
-});
+})
 
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
@@ -1480,11 +1645,34 @@ app.get("/api/manufacturers", authenticateToken, async (req, res) => {
 app.get("/api/manufacturers/:id/models", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const models = await db.manyOrNone("SELECT * FROM meter_models WHERE manufacturer_id = $1 ORDER BY name", [id])
-    return res.status(200).json(models)
+    console.log(`Fetching models for manufacturer ID: ${id}`)
+
+    // First check if the manufacturer exists
+    const manufacturer = await db.oneOrNone("SELECT id FROM manufacturers WHERE id = $1", [id])
+
+    if (!manufacturer) {
+      console.log(`Manufacturer with ID ${id} not found`)
+      return res.status(404).json({ message: "Manufacturer not found" })
+    }
+
+    // Query for device models - UPDATED to use device_models table instead of meter_models
+    const models = await db.manyOrNone(
+      `SELECT * 
+       FROM device_models 
+       WHERE manufacturer_id = $1
+       ORDER BY model_name`,
+      [id],
+    )
+
+    console.log(`Found ${models.length} models for manufacturer ${id}`)
+    return res.status(200).json({ data: models })
   } catch (error) {
-    console.error("Error fetching meter models:", error)
-    return res.status(500).json({ message: "Server error fetching meter models" })
+    console.error("Error fetching manufacturer models:", error)
+    return res.status(500).json({
+      message: "Server error fetching manufacturer models",
+      details: error.message,
+      stack: error.stack,
+    })
   }
 })
 
@@ -1495,7 +1683,7 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
     let query = `
       SELECT sm.id, sm.serial_number, sm.status, sm.firmware_version, sm.last_seen, sm.notes,
              dm.id as model_id, dm.model_name, m.name as manufacturer,
-             a.id as assignment_id, c.id as company_id, c.name as company_name
+             sma.id as assignment_id, c.id as company_id, c.name as company_name
       FROM smart_meters sm
       JOIN device_models dm ON sm.model_id = dm.id
       JOIN manufacturers m ON dm.manufacturer_id = m.id
@@ -1568,7 +1756,7 @@ app.get("/api/devices/smart-meters", authenticateToken, async (req, res) => {
   }
 })
 
-// Companies routes with facilities
+// Companies routes with facilitiesties
 app.get("/api/companies-with-facilities", authenticateToken, async (req, res) => {
   try {
     const result = await db.manyOrNone(`
@@ -2092,11 +2280,47 @@ app.get("/api/device-models/:id", authenticateToken, async (req, res) => {
 // Manufacturers routes
 app.get("/api/manufacturers", authenticateToken, async (req, res) => {
   try {
+    console.log("Fetching all manufacturers")
     const manufacturers = await db.manyOrNone("SELECT * FROM manufacturers ORDER BY name")
+    console.log(`Found ${manufacturers.length} manufacturers`)
     return res.status(200).json({ data: manufacturers })
   } catch (error) {
     console.error("Error fetching manufacturers:", error)
     return res.status(500).json({ message: "Server error fetching manufacturers" })
+  }
+})
+
+// Update the GET /api/manufacturers/:id/models endpoint to use a consistent response format
+app.get("/api/manufacturers/:id/models", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    console.log(`Fetching models for manufacturer ID: ${id}`)
+
+    // First check if the manufacturer exists
+    const manufacturer = await db.oneOrNone("SELECT id FROM manufacturers WHERE id = $1", [id])
+
+    if (!manufacturer) {
+      console.log(`Manufacturer with ID ${id} not found`)
+      return res.status(404).json({ message: "Manufacturer not found" })
+    }
+
+    // Query for device models for the edge gateway device type
+    const models = await db.manyOrNone(
+      `SELECT * 
+     FROM device_models 
+     WHERE manufacturer_id = $1 AND device_type = 'edge_gateway'
+     ORDER BY model_name`,
+      [id],
+    )
+
+    console.log(`Found ${models.length} models for manufacturer ${id}`)
+    return res.status(200).json({ data: models })
+  } catch (error) {
+    console.error("Error fetching manufacturer models:", error)
+    return res.status(500).json({
+      message: "Server error fetching manufacturer models",
+      details: error.message,
+    })
   }
 })
 
@@ -2164,6 +2388,83 @@ app.get("/api/device-models", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error fetching device models:", error)
     res.status(500).json({ message: "Server error while fetching device models" })
+  }
+})
+
+// Add these endpoints for manufacturers and models if they don't already exist:
+
+// GET all manufacturers
+// app.get("/api/manufacturers", authenticateToken, async (req, res) => {
+//   try {
+//     console.log("GET /api/manufacturers - Fetching all manufacturers")
+//     const manufacturers = await db.query("SELECT * FROM manufacturers ORDER BY name")
+//     console.log(`Found ${manufacturers.rows.length} manufacturers`)
+//     res.json(manufacturers.rows)
+//   } catch (error) {
+//     console.error("Error fetching manufacturers:", error)
+//     res.status(500).json({ message: "Failed to fetch manufacturers", error: error.message })
+//   }
+// })
+
+// GET models for a specific manufacturer
+// app.get("/api/manufacturers/:id/models", authenticateToken, async (req, res) => {
+//   try {
+//     const { id } = req.params
+//     console.log(`GET /api/manufacturers/${id}/models - Fetching models for manufacturer`)
+
+//     // First check if manufacturer exists
+//     const manufacturerResult = await db.query("SELECT * FROM manufacturers WHERE id = $1", [id])
+//     if (manufacturerResult.rows.length === 0) {
+//       console.log(`Manufacturer with ID ${id} not found`)
+//       return res.status(404).json({ message: "Manufacturer not found" })
+//     }
+
+//     const models = await db.query("SELECT * FROM device_models WHERE manufacturer_id = $1 ORDER BY model_name", [id])
+//     console.log(`Found ${models.rows.length} models for manufacturer ${id}`)
+//     res.json(models.rows)
+//   } catch (error) {
+//     console.error(`Error fetching models for manufacturer ${req.params.id}:`, error)
+//     res.status(500).json({ message: "Failed to fetch models", error: error.message })
+//   }
+// })
+
+// GET a specific manufacturer
+app.get("/api/manufacturers/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    console.log(`GET /api/manufacturers/${id} - Fetching manufacturer`)
+    const result = await db.query("SELECT * FROM manufacturers WHERE id = $1", [id])
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Manufacturer not found" })
+    }
+
+    res.json(result.rows[0])
+  } catch (error) {
+    console.error(`Error fetching manufacturer ${req.params.id}:`, error)
+    res.status(500).json({ message: "Failed to fetch manufacturer", error: error.message })
+  }
+})
+
+// POST create a new manufacturer
+app.post("/api/manufacturers", authenticateToken, async (req, res) => {
+  try {
+    const { name, contact_info, website } = req.body
+    console.log("POST /api/manufacturers - Creating new manufacturer:", req.body)
+
+    if (!name) {
+      return res.status(400).json({ message: "Manufacturer name is required" })
+    }
+
+    const result = await db.query(
+      "INSERT INTO manufacturers (name, contact_info, website) VALUES ($1, $2, $3) RETURNING *",
+      [name, contact_info, website],
+    )
+
+    res.status(201).json(result.rows[0])
+  } catch (error) {
+    console.error("Error creating manufacturer:", error)
+    res.status(500).json({ message: "Failed to create manufacturer", error: error.message })
   }
 })
 
