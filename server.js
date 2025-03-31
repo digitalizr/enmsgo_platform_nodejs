@@ -1497,7 +1497,7 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
     return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
-    return res.status(500).json({ message: "Server error fetching users" })
+    return res.status(500).json({ message: "Server error fetching users" , error: error.message })
   }
 })
 
@@ -1538,7 +1538,7 @@ app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res)
     return res.status(201).json(newUser)
   } catch (error) {
     console.error("Error creating user:", error)
-    return res.status(500).json({ message: "Server error creating user" })
+    return res.status(500).json({ message: "Server error creating user", error: error.message })
   }
 })
 
@@ -1573,7 +1573,7 @@ app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, r
     return res.status(200).json(updatedUser)
   } catch (error) {
     console.error("Error updating user:", error)
-    return res.status(500).json({ message: "Server error updating user" })
+    return res.status(500).json({ message: "Server error updating user",error: error.message  })
   }
 })
 
@@ -1598,7 +1598,7 @@ app.delete("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req
     return res.status(200).json({ message: "User deleted successfully" })
   } catch (error) {
     console.error("Error deleting user:", error)
-    return res.status(500).json({ message: "Server error deleting user" })
+    return res.status(500).json({ message: "Server error deleting user",error: error.message })
   }
 })
 
