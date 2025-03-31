@@ -8,7 +8,6 @@ const rateLimit = require("express-rate-limit")
 const jwt = require("jsonwebtoken")
 const bcrypt = require("bcrypt")
 const { v4: uuidv4 } = require("uuid")
-const e = require("express")
 const pgp = require("pg-promise")()
 
 // Initialize Express app
@@ -1432,19 +1431,19 @@ app.delete("/api/assignments/:id", authenticateToken, checkRole(["admin"]), asyn
 
 // Add these endpoints to your server.js after the existing assignments routes
 
-// Assign edge gateway to company
+// Assign edge gateway to user
 app.post("/api/assignments/assign-edge-gateway", authenticateToken, async (req, res) => {
   try {
-    const { companyId, facilityId, departmentId, gatewayId } = req.body
+    const { userId, gatewayId } = req.body
 
-    if (!companyId || !gatewayId) {
-      return res.status(400).json({ message: "Company ID and Gateway ID are required" })
+    if (!userId || !gatewayId) {
+      return res.status(400).json({ message: "User ID and Gateway ID are required" })
     }
 
-    // Check if company exists
-    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [companyId])
-    if (!company) {
-      return res.status(404).json({ message: "Company not found" })
+    // Check if user exists
+    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [userId])
+    if (!user) {
+      return res.status(404).json({ message: "User not found" })
     }
 
     // Check if edge gateway exists and is available
@@ -1457,16 +1456,37 @@ app.post("/api/assignments/assign-edge-gateway", authenticateToken, async (req, 
       return res.status(409).json({ message: "Edge gateway is not available for assignment" })
     }
 
+    // Get user's company information
+    const userCompany = await db.oneOrNone(
+      `
+      SELECT uc.company_id, uc.facility_id, uc.department_id
+      FROM user_companies uc
+      WHERE uc.user_id = $1 AND uc.is_primary = TRUE
+    `,
+      [userId],
+    )
+
+    if (!userCompany || !userCompany.company_id) {
+      return res.status(400).json({ message: "User must be associated with a company" })
+    }
+
     // Start a transaction
     return await db.tx(async (t) => {
       // Create assignment
       const newAssignment = await t.one(
         `
         INSERT INTO assignments (
-          company_id, facility_id, department_id, edge_gateway_id, created_by
-        ) VALUES ($1, $2, $3, $4, $5) RETURNING *
-        `,
-        [companyId, facilityId || null, departmentId || null, gatewayId, req.user.id],
+          user_id, company_id, facility_id, department_id, edge_gateway_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+      `,
+        [
+          userId,
+          userCompany.company_id,
+          userCompany.facility_id || null,
+          userCompany.department_id || null,
+          gatewayId,
+          req.user.id,
+        ],
       )
 
       // Update edge gateway status
@@ -1729,76 +1749,50 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
     return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
-    return res.status(500).json({ message: "Server error fetching users", error: error.message })
+    return res.status(500).json({ message: "Server error fetching users" })
   }
 })
 
-
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
-    const { email, password, first_name, last_name, role_id, is_active, require_password_change } = req.body;
-
-    // Validate required fields
-    if (!email || !password || !first_name || !last_name || !role_id) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        error: "Email, password, first_name, last_name, and role_id are required",
-      });
-    }
+    const { email, password, first_name, last_name, role, status } = req.body
 
     // Check if email already exists
-    const existingUser = await db.oneOrNone("SELECT id FROM users WHERE email = $1", [email]);
+    const existingUser = await db.oneOrNone("SELECT id FROM users WHERE email = $1", [email])
     if (existingUser) {
-      return res.status(409).json({
-        message: "User with this email already exists",
-        error: "Email already in use",
-      });
-    }
-
-    // Check if role exists
-    const roleExists = await db.oneOrNone("SELECT id FROM roles WHERE id = $1", [role_id]);
-    if (!roleExists) {
-      return res.status(400).json({
-        message: "Invalid role_id",
-        error: "The specified role_id does not exist",
-      });
+      return res.status(409).json({ message: "User with this email already exists" })
     }
 
     // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const salt = await bcrypt.genSalt(10)
+    const hashedPassword = await bcrypt.hash(password, salt)
 
     // Insert new user
     const newUser = await db.one(
       `
       INSERT INTO users (
-        email, password_hash, first_name, last_name, role_id, is_active, 
+        email, password_hash, first_name, last_name, role, status, 
         require_password_change, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, email, first_name, last_name, role_id, is_active
-      `,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, email, first_name, last_name, role, status
+    `,
       [
         email,
         hashedPassword,
         first_name,
         last_name,
-        role_id,
-        is_active !== undefined ? is_active : true,
-        require_password_change !== undefined ? require_password_change : true,
+        role,
+        status || "active",
+        true, // Require password change on first login
         req.user.id,
-      ]
-    );
+      ],
+    )
 
-    console.log("User created successfully:", newUser);
-    return res.status(201).json(newUser);
+    return res.status(201).json(newUser)
   } catch (error) {
-    console.error("Error creating user:", error);
-    return res.status(500).json({
-      message: "Server error creating user",
-      error: error.message || "Unknown error",
-    });
+    console.error("Error creating user:", error)
+    return res.status(500).json({ message: "Server error creating user" })
   }
-});
-
+})
 
 app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
@@ -1831,7 +1825,7 @@ app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, r
     return res.status(200).json(updatedUser)
   } catch (error) {
     console.error("Error updating user:", error)
-    return res.status(500).json({ message: "Server error updating user", error: error.message })
+    return res.status(500).json({ message: "Server error updating user" })
   }
 })
 
@@ -4327,8 +4321,8 @@ app.post("/api/user-companies", authenticateToken, async (req, res) => {
 
 app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
   try {
-    const { userId } = req.params;
-    console.log(`Fetching user-company relationships for user ${userId}`);
+    const { userId } = req.params
+    console.log(`Fetching user-company relationships for user ${userId}`)
 
     // Get relationships with company, facility, and department info
     const relationships = await db.manyOrNone(
@@ -4344,10 +4338,10 @@ app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
       WHERE uc.user_id = $1
       ORDER BY uc.is_primary DESC
       `,
-      [userId]
-    );
+      [userId],
+    )
 
-    console.log(`Found ${relationships.length} relationships for user ${userId}`);
+    console.log(`Found ${relationships.length} relationships for user ${userId}`)
 
     // Format the response
     const formattedRelationships = relationships.map((rel) => ({
@@ -4357,31 +4351,5 @@ app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
       created_at: rel.created_at,
       updated_at: rel.updated_at,
       company: {
-        id: rel.company_id,
-        name: rel.company_name,
-      },
-      facility: rel.facility_id
-        ? {
-            id: rel.facility_id,
-            name: rel.facility_name,
-          }
-        : null,
-      department: rel.department_id
-        ? {
-            id: rel.department_id,
-            name: rel.department_name,
-          }
-        : null,
-    }));
+        id: rel
 
-    return res.status(200).json({ data: formattedRelationships });
-  } catch (error) {
-    console.error("Error fetching user-company relationships:", error);
-    return res.status(500).json({
-      message: "Server error fetching user-company relationships",
-      error: error.message || "Unknown error",
-    });
-  }
-});
-
-// Ensure the file ends with the closing bracket for the module
