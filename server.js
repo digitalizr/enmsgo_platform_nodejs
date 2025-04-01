@@ -8,7 +8,6 @@ const rateLimit = require("express-rate-limit")
 const jwt = require("jsonwebtoken")
 const bcrypt = require("bcrypt")
 const { v4: uuidv4 } = require("uuid")
-const e = require("express")
 const pgp = require("pg-promise")()
 
 // Initialize Express app
@@ -1564,13 +1563,25 @@ app.post("/api/assignments/remove-edge-gateway", authenticateToken, async (req, 
 
     // Start a transaction
     return await db.tx(async (t) => {
-      // Get assignment for this user and gateway
+      // First get the user's company information
+      const userCompanyResult = await t.oneOrNone(
+        `SELECT uc.company_id FROM user_companies uc 
+       WHERE uc.user_id = $1 
+       ORDER BY uc.is_primary DESC LIMIT 1`,
+        [userId],
+      )
+
+      if (!userCompanyResult) {
+        return res.status(404).json({ message: "User is not associated with any company" })
+      }
+
+      const companyId = userCompanyResult.company_id
+
+      // Get assignment for this company and gateway
       const assignment = await t.oneOrNone(
-        `
-        SELECT id FROM assignments 
-        WHERE user_id = $1 AND edge_gateway_id = $2
-      `,
-        [userId, gatewayId],
+        `SELECT id FROM assignments 
+      WHERE company_id = $1 AND edge_gateway_id = $2`,
+        [companyId, gatewayId],
       )
 
       if (!assignment) {
@@ -1579,10 +1590,8 @@ app.post("/api/assignments/remove-edge-gateway", authenticateToken, async (req, 
 
       // Get any smart meters assigned to this assignment
       const smartMeterAssignments = await t.manyOrNone(
-        `
-        SELECT smart_meter_id FROM smart_meter_assignments 
-        WHERE assignment_id = $1
-      `,
+        `SELECT smart_meter_id FROM smart_meter_assignments 
+      WHERE assignment_id = $1`,
         [assignment.id],
       )
 
@@ -1729,39 +1738,28 @@ app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) 
     return res.status(200).json({ data: formattedUsers })
   } catch (error) {
     console.error("Error fetching users:", error)
-    return res.status(500).json({ message: "Server error fetching users", error: error.message })
+    return res.status(500).json({ message: "Server error fetching users" })
   }
 })
-
-
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { email, password, first_name, last_name, role_id, is_active, require_password_change } = req.body;
 
     // Validate required fields
     if (!email || !password || !first_name || !last_name || !role_id) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        error: "Email, password, first_name, last_name, and role_id are required",
-      });
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
     // Check if email already exists
     const existingUser = await db.oneOrNone("SELECT id FROM users WHERE email = $1", [email]);
     if (existingUser) {
-      return res.status(409).json({
-        message: "User with this email already exists",
-        error: "Email already in use",
-      });
+      return res.status(409).json({ message: "User with this email already exists" });
     }
 
     // Check if role exists
     const roleExists = await db.oneOrNone("SELECT id FROM roles WHERE id = $1", [role_id]);
     if (!roleExists) {
-      return res.status(400).json({
-        message: "Invalid role_id",
-        error: "The specified role_id does not exist",
-      });
+      return res.status(400).json({ message: "Invalid role_id" });
     }
 
     // Hash password
@@ -1788,17 +1786,12 @@ app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res)
       ]
     );
 
-    console.log("User created successfully:", newUser);
     return res.status(201).json(newUser);
   } catch (error) {
     console.error("Error creating user:", error);
-    return res.status(500).json({
-      message: "Server error creating user",
-      error: error.message || "Unknown error",
-    });
+    return res.status(500).json({ message: "Server error creating user", error: error.message });
   }
 });
-
 
 app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
@@ -1831,7 +1824,7 @@ app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, r
     return res.status(200).json(updatedUser)
   } catch (error) {
     console.error("Error updating user:", error)
-    return res.status(500).json({ message: "Server error updating user", error: error.message })
+    return res.status(500).json({ message: "Server error updating user" })
   }
 })
 
@@ -4325,10 +4318,11 @@ app.post("/api/user-companies", authenticateToken, async (req, res) => {
   }
 })
 
+
 app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
   try {
-    const { userId } = req.params;
-    console.log(`Fetching user-company relationships for user ${userId}`);
+    const { userId } = req.params
+    console.log(`Fetching user-company relationships for user ${userId}`)
 
     // Get relationships with company, facility, and department info
     const relationships = await db.manyOrNone(
@@ -4344,10 +4338,10 @@ app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
       WHERE uc.user_id = $1
       ORDER BY uc.is_primary DESC
       `,
-      [userId]
-    );
+      [userId],
+    )
 
-    console.log(`Found ${relationships.length} relationships for user ${userId}`);
+    console.log(`Found ${relationships.length} relationships for user ${userId}`)
 
     // Format the response
     const formattedRelationships = relationships.map((rel) => ({
@@ -4372,16 +4366,14 @@ app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
             name: rel.department_name,
           }
         : null,
-    }));
+    }))
 
-    return res.status(200).json({ data: formattedRelationships });
+    return res.status(200).json({ data: formattedRelationships })
   } catch (error) {
-    console.error("Error fetching user-company relationships:", error);
+    console.error("Error fetching user-company relationships:", error)
     return res.status(500).json({
       message: "Server error fetching user-company relationships",
       error: error.message || "Unknown error",
-    });
+    })
   }
-});
-
-// Ensure the file ends with the closing bracket for the module
+})

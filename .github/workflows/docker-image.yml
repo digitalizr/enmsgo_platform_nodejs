@@ -3,7 +3,7 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - 1.7
+      - 1.8
       
 
 jobs:
