@@ -11,22 +11,18 @@ const addManufacturer = async (req, res) => {
 
   try {
     const query = `
-      INSERT INTO manufacturers (name, website, support_email, support_phone, notes, created_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      INSERT INTO manufacturers (name, website, support_email, support_phone, notes, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
       RETURNING *;
     `;
-    const values = [name, website, support_email, support_phone, notes];
+    const values = [name, website || null, support_email || null, support_phone || null, notes || null];
     const result = await client.query(query, values);
 
-    res
-      .status(201)
-      .json({ message: "Manufacturer added", manufacturer: result.rows[0] });
+    res.status(201).json({ message: "Manufacturer added", manufacturer: result.rows[0] });
   } catch (error) {
     console.error("Error adding manufacturer:", error);
     if (error.code === "23505") {
-      return res
-        .status(400)
-        .json({ message: "Manufacturer name must be unique" });
+      return res.status(400).json({ message: "Manufacturer name must be unique" });
     }
     res.status(500).json({ message: "Internal server error" });
   }
@@ -70,43 +66,63 @@ const getSingleManufacturer = async (req, res) => {
 // Update a manufacturer
 const updateManufacturer = async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
+  const { name, website, support_email, support_phone, notes } = req.body;
 
   if (!isUuid(id)) {
     return res.status(400).json({ message: "Invalid manufacturer ID format" });
   }
 
-  if (Object.keys(updates).length === 0) {
+  let updates = [];
+  let values = [];
+  let index = 1;
+
+  if (name) {
+    updates.push(`name = $${index}`);
+    values.push(name);
+    index++;
+  }
+  if (website) {
+    updates.push(`website = $${index}`);
+    values.push(website);
+    index++;
+  }
+  if (support_email) {
+    updates.push(`support_email = $${index}`);
+    values.push(support_email);
+    index++;
+  }
+  if (support_phone) {
+    updates.push(`support_phone = $${index}`);
+    values.push(support_phone);
+    index++;
+  }
+  if (notes) {
+    updates.push(`notes = $${index}`);
+    values.push(notes);
+    index++;
+  }
+
+  if (updates.length === 0) {
     return res.status(400).json({ message: "No fields to update" });
   }
 
+  updates.push(`updated_at = NOW()`);
+  values.push(id);
+
   try {
-    let query = "UPDATE manufacturers SET ";
-    const values = [];
-    let index = 1;
-
-    for (const key in updates) {
-      query += `${key} = $${index}, `;
-      values.push(updates[key]);
-      index++;
-    }
-
-    query =
-      query.slice(0, -2) +
-      `, updated_at = NOW() WHERE id = $${index} RETURNING *;`;
-    values.push(id);
-
+    const query = `UPDATE manufacturers SET ${updates.join(", ")} WHERE id = $${index} RETURNING *;`;
     const result = await client.query(query, values);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Manufacturer not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Manufacturer updated", manufacturer: result.rows[0] });
+    res.status(200).json({ message: "Manufacturer updated", manufacturer: result.rows[0] });
   } catch (error) {
     console.error("Error updating manufacturer:", error);
+    if (error.code === "23505") {
+      return res.status(400).json({ message: "Manufacturer name must be unique" });
+    }
     res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -127,9 +143,7 @@ const deleteManufacturer = async (req, res) => {
       return res.status(404).json({ message: "Manufacturer not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Manufacturer deleted", manufacturer: result.rows[0] });
+    res.status(200).json({ message: "Manufacturer deleted", manufacturer: result.rows[0] });
   } catch (error) {
     console.error("Error deleting manufacturer:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -143,4 +157,3 @@ module.exports = {
   updateManufacturer,
   deleteManufacturer,
 };
- 

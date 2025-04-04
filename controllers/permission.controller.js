@@ -12,8 +12,8 @@ const addPermissions = async (req, res) => {
 
   try {
     const query = `
-      INSERT INTO permissions (name, description, resource, action)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO permissions (name, description, resource, action, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
       RETURNING *;
     `;
     const values = [name, description || null, resource, action];
@@ -29,7 +29,7 @@ const addPermissions = async (req, res) => {
 };
 
 // Get all permissions
-const getAllPermissionss = async (req, res) => {
+const getAllPermissions = async (req, res) => {
   try {
     const query = "SELECT * FROM permissions ORDER BY created_at DESC;";
     const result = await client.query(query);
@@ -123,7 +123,7 @@ const deletePermissions = async (req, res) => {
 
 module.exports = {
   addPermissions,
-  getAllPermissionss,
+  getAllPermissions,
   getSinglePermissions,
   updatePermissions,
   deletePermissions,

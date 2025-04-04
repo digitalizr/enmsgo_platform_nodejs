@@ -1,22 +1,22 @@
 const express = require("express");
 const router = express.Router();
-// const {
-//   addmanufactures,
-//   getAllmanufacturess,
-//   getSinglemanufactures,
-//   updatemanufactures,
-//   deletemanufactures,
-// } = require("../controllers/manufacturers.controller.js");
+const {
+  addmanufactures,
+  getAllmanufacturess,
+  getSinglemanufactures,
+  updatemanufactures,
+  deletemanufactures,
+} = require("../controllers/manufacturers.controller.js");
 
-// router.post("/", addmanufactures);
+router.post("/", addmanufactures);
 
-// router.get("/", getAllmanufacturess);
+router.get("/", getAllmanufacturess);
 
-// router.get("/:id", getSinglemanufactures);
+router.get("/:id", getSinglemanufactures);
 
-// router.put("/:id", updatemanufactures);
+router.put("/:id", updatemanufactures);
 
-// router.delete("/:id", deletemanufactures);
+router.delete("/:id", deletemanufactures);
 
 module.exports = router;
 

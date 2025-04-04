@@ -2,56 +2,39 @@ const { client } = require("../lib/connectDB.js");
 const { validate: isUuid } = require("uuid");
 
 // Allowed status values
-const VALID_STATUSES = ["Contracted", "Proposal", "Contacted", "Lead"];
+const VALID_STATUSES = ["lead", "contacted", "proposal", "contracted"];
 
 // Register a new company
 const registerCompany = async (req, res) => {
   const { 
-    name, 
-    address, 
-    contact_name, 
-    contact_email, 
-    contact_phone, 
-    status, 
-    notes, 
-    created_by 
+    name, address, contact_name, contact_email, contact_phone, 
+    status, notes, created_by 
   } = req.body;
 
-  if (!name || !address || !contact_name || !contact_email || !contact_phone || !created_by) {
-    return res.status(400).json({ message: "All required fields must be provided" });
+  if (!name || !created_by) {
+    return res.status(400).json({ message: "Company name and created_by are required" });
   }
 
-  if (status && !VALID_STATUSES.includes(status)) {
+  if (!isUuid(created_by)) {
+    return res.status(400).json({ message: "Invalid user ID for created_by" });
+  }
+
+  if (status && !VALID_STATUSES.includes(status.toLowerCase())) {
     return res.status(400).json({ message: "Invalid status value" });
   }
 
   try {
     const query = `
       INSERT INTO companies (
-        name, 
-        address, 
-        contact_name, 
-        contact_email, 
-        contact_phone, 
-        status, 
-        notes, 
-        created_at, 
-        updated_at, 
-        created_by, 
-        updated_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $8)
+        name, address, contact_name, contact_email, contact_phone, 
+        status, notes, created_at, updated_at, created_by, updated_by
+      ) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $8) 
       RETURNING *;
     `;
     const values = [
-      name, 
-      address, 
-      contact_name, 
-      contact_email, 
-      contact_phone, 
-      status || "Lead", 
-      notes, 
-      created_by
+      name, address || null, contact_name || null, contact_email || null, 
+      contact_phone || null, status || "lead", notes || null, created_by
     ];
     const result = await client.query(query, values);
 
@@ -100,25 +83,29 @@ const getAllCompanies = async (req, res) => {
 // Update a company by ID
 const updateCompany = async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
+  const { updated_by, ...updates } = req.body;
 
   if (!isUuid(id)) {
     return res.status(400).json({ message: "Invalid company ID" });
+  }
+
+  if (!isUuid(updated_by)) {
+    return res.status(400).json({ message: "Invalid user ID for updated_by" });
   }
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ message: "No fields to update" });
   }
 
-  if (updates.status && !VALID_STATUSES.includes(updates.status)) {
+  if (updates.status && !VALID_STATUSES.includes(updates.status.toLowerCase())) {
     return res.status(400).json({ message: "Invalid status value" });
   }
 
   try {
     const validColumns = [
-      "name", "address", "contact_name", "contact_email", "contact_phone", "status", "notes", "updated_by"
+      "name", "address", "contact_name", "contact_email", "contact_phone", "status", "notes"
     ];
-    
+
     let query = "UPDATE companies SET ";
     const values = [];
     let index = 1;
@@ -131,8 +118,8 @@ const updateCompany = async (req, res) => {
       }
     }
 
-    query = query.slice(0, -2) + `, updated_at = NOW() WHERE id = $${index} RETURNING *;`;
-    values.push(id);
+    query += `updated_at = NOW(), updated_by = $${index} WHERE id = $${index + 1} RETURNING *;`;
+    values.push(updated_by, id);
 
     const result = await client.query(query, values);
 

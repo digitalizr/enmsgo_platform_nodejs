@@ -1,11 +1,11 @@
 const { client } = require("../lib/connectDB.js");
 
 // Predefined system roles
-const SYSTEM_ROLES = ["Technician", "Operator", "Admin"];
+const SYSTEM_ROLES = ["technician", "operator", "admin", "customer"];
 
 // Add a new role
 const addRole = async (req, res) => {
-  const { name, description, is_system } = req.body;
+  const { name, description } = req.body;
 
   if (!name) {
     return res.status(400).json({ message: "Role name is required" });
@@ -14,8 +14,8 @@ const addRole = async (req, res) => {
   try {
     const isSystemRole = SYSTEM_ROLES.includes(name);
     const query = `
-      INSERT INTO roles (name, description, is_system)
-      VALUES ($1, $2, $3)
+      INSERT INTO roles (name, description, is_system, created_at, updated_at)
+      VALUES ($1, $2, $3, NOW(), NOW())
       RETURNING *;
     `;
     const values = [name, description || null, isSystemRole];
@@ -70,7 +70,6 @@ const updateRole = async (req, res) => {
   }
 
   try {
-    // Check if the role is a system role
     const roleCheck = await client.query("SELECT * FROM roles WHERE id = $1;", [id]);
     if (roleCheck.rows.length === 0) {
       return res.status(404).json({ message: "Role not found" });
@@ -94,10 +93,6 @@ const updateRole = async (req, res) => {
     values.push(id);
 
     const result = await client.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Role not found" });
-    }
 
     res.status(200).json({ message: "Role updated", role: result.rows[0] });
   } catch (error) {

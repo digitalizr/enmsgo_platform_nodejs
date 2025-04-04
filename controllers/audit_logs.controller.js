@@ -20,8 +20,8 @@ const addAuditLog = async (req, res) => {
 
   try {
     const query = `
-      INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address, changed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       RETURNING *;
     `;
     const values = [
@@ -74,7 +74,7 @@ const getSingleAuditLog = async (req, res) => {
   }
 };
 
-// Update an audit log entry (Not typically needed, but included for completeness)
+// Update operation not allowed for audit logs
 const updateAuditLog = async (req, res) => {
   return res
     .status(405)

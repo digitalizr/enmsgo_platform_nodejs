@@ -3,23 +3,24 @@ const { validate: isUuid } = require("uuid");
 
 // Register a new department
 const registerDepartment = async (req, res) => {
-  const { name, facility_id } = req.body;
+  const { name, facility_id, notes, created_by } = req.body;
 
-  if (!name || !facility_id) {
-    return res.status(400).json({ message: "Name and facility ID are required" });
+  if (!name || !facility_id || !created_by) {
+    return res.status(400).json({ message: "Name, facility_id, and created_by are required" });
   }
 
-  if (!isUuid(facility_id)) {
-    return res.status(400).json({ message: "Invalid facility ID format" });
+  if (!isUuid(facility_id) || !isUuid(created_by)) {
+    return res.status(400).json({ message: "Invalid UUID format for facility_id or created_by" });
   }
 
   try {
     const query = `
-      INSERT INTO departments (name, facility_id, created_at)
-      VALUES ($1, $2, NOW())
+      INSERT INTO departments (name, facility_id, notes, created_at, updated_at, created_by, updated_by)
+      VALUES ($1, $2, $3, NOW(), NOW(), $4, $4)
       RETURNING *;
     `;
-    const values = [name, facility_id];
+    const values = [name, facility_id, notes || null, created_by];
+
     const result = await client.query(query, values);
 
     res.status(201).json({ message: "Department registered", department: result.rows[0] });
@@ -57,7 +58,6 @@ const getAllDepartments = async (req, res) => {
   try {
     const query = "SELECT * FROM departments ORDER BY created_at DESC;";
     const result = await client.query(query);
-
     res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error fetching departments:", error);
@@ -68,10 +68,18 @@ const getAllDepartments = async (req, res) => {
 // Update a department by ID
 const updateDepartment = async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
+  const { updated_by, ...updates } = req.body;
 
   if (!isUuid(id)) {
     return res.status(400).json({ message: "Invalid department ID format" });
+  }
+
+  if (!isUuid(updated_by)) {
+    return res.status(400).json({ message: "Invalid UUID format for updated_by" });
+  }
+
+  if (updates.facility_id && !isUuid(updates.facility_id)) {
+    return res.status(400).json({ message: "Invalid facility ID format" });
   }
 
   if (Object.keys(updates).length === 0) {
@@ -92,8 +100,8 @@ const updateDepartment = async (req, res) => {
       }
     }
 
-    query = query.slice(0, -2) + `, updated_at = NOW() WHERE id = $${index} RETURNING *;`;
-    values.push(id);
+    query += `updated_at = NOW(), updated_by = $${index} WHERE id = $${index + 1} RETURNING *;`;
+    values.push(updated_by, id);
 
     const result = await client.query(query, values);
 

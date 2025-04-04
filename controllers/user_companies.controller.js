@@ -3,62 +3,39 @@ const { validate: isUuid } = require("uuid");
 
 // Add a User to a Company
 const addUserCompany = async (req, res) => {
-  const { user_id, company_id, facility_id, department_id, is_primary } =
-    req.body;
+  const { user_id, company_id, facility_id, department_id, is_primary } = req.body;
 
   if (!user_id || !company_id) {
-    return res
-      .status(400)
-      .json({ message: "User ID and Company ID are required" });
+    return res.status(400).json({ message: "User ID and Company ID are required" });
   }
 
   if (!isUuid(user_id) || !isUuid(company_id)) {
-    return res
-      .status(400)
-      .json({ message: "Invalid UUID format for user_id or company_id" });
+    return res.status(400).json({ message: "Invalid UUID format for user_id or company_id" });
   }
 
   if (facility_id && !isUuid(facility_id)) {
-    return res
-      .status(400)
-      .json({ message: "Invalid UUID format for facility_id" });
+    return res.status(400).json({ message: "Invalid UUID format for facility_id" });
   }
 
   if (department_id && !isUuid(department_id)) {
-    return res
-      .status(400)
-      .json({ message: "Invalid UUID format for department_id" });
+    return res.status(400).json({ message: "Invalid UUID format for department_id" });
   }
 
   try {
     // Ensure only one primary company per user
     if (is_primary) {
-      await client.query(
-        "UPDATE user_companies SET is_primary = FALSE WHERE user_id = $1",
-        [user_id]
-      );
+      await client.query("UPDATE user_companies SET is_primary = FALSE WHERE user_id = $1", [user_id]);
     }
 
     const query = `
-      INSERT INTO user_companies (user_id, company_id, facility_id, department_id, is_primary, created_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      INSERT INTO user_companies (user_id, company_id, facility_id, department_id, is_primary, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
       RETURNING *;
     `;
-    const values = [
-      user_id,
-      company_id,
-      facility_id,
-      department_id,
-      is_primary || false,
-    ];
+    const values = [user_id, company_id, facility_id || null, department_id || null, is_primary || false];
+    
     const result = await client.query(query, values);
-
-    res
-      .status(201)
-      .json({
-        message: "User assigned to company",
-        user_company: result.rows[0],
-      });
+    res.status(201).json({ message: "User assigned to company", user_company: result.rows[0] });
   } catch (error) {
     console.error("Error adding user to company:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -87,25 +64,21 @@ const getAllUserCompanies = async (req, res) => {
 
 // Get a single user-company relationship by user_id and company_id
 const getSingleUserCompany = async (req, res) => {
-  const { id } = req.params;
+  const { user_id, company_id } = req.params;
 
-  if (!isUuid(id)) {
-    return res.status(400).json({ message: "Invalid user-company ID format" });
+  if (!isUuid(user_id) || !isUuid(company_id)) {
+    return res.status(400).json({ message: "Invalid UUID format for user_id or company_id" });
   }
 
   try {
-    const query = `
-      SELECT * FROM user_companies WHERE user_id = $1 OR company_id = $1;
-    `;
-    const result = await client.query(query, [id]);
+    const query = `SELECT * FROM user_companies WHERE user_id = $1 AND company_id = $2;`;
+    const result = await client.query(query, [user_id, company_id]);
 
     if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "User-company relationship not found" });
+      return res.status(404).json({ message: "User-company relationship not found" });
     }
 
-    res.status(200).json(result.rows);
+    res.status(200).json(result.rows[0]);
   } catch (error) {
     console.error("Error fetching user-company relationship:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -114,59 +87,59 @@ const getSingleUserCompany = async (req, res) => {
 
 // Update a user-company relationship
 const updateUserCompany = async (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
+  const { user_id, company_id } = req.params;
+  const { facility_id, department_id, is_primary } = req.body;
 
-  if (!isUuid(id)) {
-    return res.status(400).json({ message: "Invalid user-company ID format" });
+  if (!isUuid(user_id) || !isUuid(company_id)) {
+    return res.status(400).json({ message: "Invalid UUID format for user_id or company_id" });
   }
 
-  if (updates.facility_id && !isUuid(updates.facility_id)) {
-    return res
-      .status(400)
-      .json({ message: "Invalid UUID format for facility_id" });
+  if (facility_id && !isUuid(facility_id)) {
+    return res.status(400).json({ message: "Invalid UUID format for facility_id" });
   }
 
-  if (updates.department_id && !isUuid(updates.department_id)) {
-    return res
-      .status(400)
-      .json({ message: "Invalid UUID format for department_id" });
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ message: "No fields to update" });
+  if (department_id && !isUuid(department_id)) {
+    return res.status(400).json({ message: "Invalid UUID format for department_id" });
   }
 
   try {
-    let query = "UPDATE user_companies SET ";
-    const values = [];
+    let updates = [];
+    let values = [];
     let index = 1;
 
-    for (const key in updates) {
-      query += `${key} = $${index}, `;
-      values.push(updates[key]);
+    if (facility_id) {
+      updates.push(`facility_id = $${index}`);
+      values.push(facility_id);
+      index++;
+    }
+    if (department_id) {
+      updates.push(`department_id = $${index}`);
+      values.push(department_id);
+      index++;
+    }
+    if (typeof is_primary !== "undefined") {
+      if (is_primary) {
+        await client.query("UPDATE user_companies SET is_primary = FALSE WHERE user_id = $1", [user_id]);
+      }
+      updates.push(`is_primary = $${index}`);
+      values.push(is_primary);
       index++;
     }
 
-    query =
-      query.slice(0, -2) +
-      `, updated_at = NOW() WHERE user_id = $${index} OR company_id = $${index} RETURNING *;`;
-    values.push(id);
-
-    const result = await client.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "User-company relationship not found" });
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
     }
 
-    res
-      .status(200)
-      .json({
-        message: "User-company relationship updated",
-        user_company: result.rows[0],
-      });
+    updates.push(`updated_at = NOW()`);
+    const query = `UPDATE user_companies SET ${updates.join(", ")} WHERE user_id = $${index} AND company_id = $${index + 1} RETURNING *;`;
+    values.push(user_id, company_id);
+
+    const result = await client.query(query, values);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "User-company relationship not found" });
+    }
+
+    res.status(200).json({ message: "User-company relationship updated", user_company: result.rows[0] });
   } catch (error) {
     console.error("Error updating user-company relationship:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -175,29 +148,21 @@ const updateUserCompany = async (req, res) => {
 
 // Delete a user-company relationship
 const deleteUserCompany = async (req, res) => {
-  const { id } = req.params;
+  const { user_id, company_id } = req.params;
 
-  if (!isUuid(id)) {
-    return res.status(400).json({ message: "Invalid user-company ID format" });
+  if (!isUuid(user_id) || !isUuid(company_id)) {
+    return res.status(400).json({ message: "Invalid UUID format for user_id or company_id" });
   }
 
   try {
-    const query =
-      "DELETE FROM user_companies WHERE user_id = $1 OR company_id = $1 RETURNING *;";
-    const result = await client.query(query, [id]);
+    const query = `DELETE FROM user_companies WHERE user_id = $1 AND company_id = $2 RETURNING *;`;
+    const result = await client.query(query, [user_id, company_id]);
 
     if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "User-company relationship not found" });
+      return res.status(404).json({ message: "User-company relationship not found" });
     }
 
-    res
-      .status(200)
-      .json({
-        message: "User-company relationship deleted",
-        user_company: result.rows[0],
-      });
+    res.status(200).json({ message: "User-company relationship deleted", user_company: result.rows[0] });
   } catch (error) {
     console.error("Error deleting user-company relationship:", error);
     res.status(500).json({ message: "Internal server error" });
