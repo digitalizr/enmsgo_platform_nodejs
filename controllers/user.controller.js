@@ -3,21 +3,41 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const generateToken = require("../utils/generateToken.js");
 
+// Helper to exclude sensitive fields
+const sanitizeUser = (user) => {
+  const { password_hash, ...safeUser } = user;
+  return safeUser;
+};
+
 // Register a new user
 const addUser = async (req, res) => {
   const {
-    first_name, last_name, email, phone, password, role_id,
-    created_by, is_active, require_password_change
+    first_name,
+    last_name,
+    email,
+    phone,
+    password,
+    role_id,
+    created_by,
+    is_active,
+    require_password_change
   } = req.body;
 
   if (!first_name || !last_name || !email || !password || !role_id) {
-    return res.status(400).json({ message: "First name, last name, email, password, and role_id are required" });
+    return res.status(400).json({
+      message: "First name, last name, email, password, and role_id are required",
+    });
   }
 
   try {
     const roleCheck = await client.query("SELECT id FROM roles WHERE id = $1", [role_id]);
     if (roleCheck.rows.length === 0) {
       return res.status(400).json({ message: "Invalid role_id" });
+    }
+
+    const emailCheck = await client.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (emailCheck.rows.length > 0) {
+      return res.status(400).json({ message: "Email already in use" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -31,13 +51,24 @@ const addUser = async (req, res) => {
       RETURNING *;
     `;
     const values = [
-      first_name, last_name, email, phone || null, hashedPassword, role_id, 
-      is_active ?? true, require_password_change ?? false, created_by || null
+      first_name,
+      last_name,
+      email,
+      phone || null,
+      hashedPassword,
+      role_id,
+      is_active ?? true,
+      require_password_change ?? false,
+      created_by || null,
     ];
     const result = await client.query(query, values);
     const token = await generateToken(result.rows[0].id);
 
-    res.status(201).json({ message: "User registered successfully", user: result.rows[0], token });
+    res.status(201).json({
+      message: "User registered successfully",
+      user: sanitizeUser(result.rows[0]),
+      token,
+    });
   } catch (error) {
     console.error("Error adding user:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -53,7 +84,14 @@ const loginUser = async (req, res) => {
   }
 
   try {
-    const query = "SELECT * FROM users WHERE email = $1";
+    const query = `
+      SELECT 
+        users.*, 
+        roles.name AS role_name
+      FROM users
+      JOIN roles ON users.role_id = roles.id
+      WHERE users.email = $1
+    `;
     const result = await client.query(query, [email]);
 
     if (result.rows.length === 0) {
@@ -67,15 +105,22 @@ const loginUser = async (req, res) => {
     }
 
     const token = await generateToken(user.id);
-
     await client.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
-    res.status(200).json({ message: "Login successful", user, token });
+    res.status(200).json({
+      message: "Login successful",
+      user: {
+        ...sanitizeUser(user),
+        role_name: user.role_name, // 👈 includes the role name
+      },
+      token,
+    });
   } catch (error) {
     console.error("Error logging in:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 // Update user
 const updateUser = async (req, res) => {
@@ -89,12 +134,12 @@ const updateUser = async (req, res) => {
     role_id,
     is_active,
     require_password_change,
-    updated_by
+    updated_by,
   } = req.body;
 
   if (!first_name || !last_name || !email || !role_id) {
     return res.status(400).json({
-      message: "First name, last name, email, and role_id are required"
+      message: "First name, last name, email, and role_id are required",
     });
   }
 
@@ -141,12 +186,14 @@ const updateUser = async (req, res) => {
       is_active ?? true,
       require_password_change ?? false,
       updated_by || null,
-      id
+      id,
     ];
 
     const result = await client.query(query, values);
-
-    res.status(200).json({ message: "User updated successfully", user: result.rows[0] });
+    res.status(200).json({
+      message: "User updated successfully",
+      user: sanitizeUser(result.rows[0]),
+    });
   } catch (error) {
     console.error("Error updating user:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -157,7 +204,8 @@ const updateUser = async (req, res) => {
 const getAllUsers = async (req, res) => {
   try {
     const result = await client.query("SELECT * FROM users ORDER BY created_at DESC");
-    res.status(200).json({ users: result.rows });
+    const users = result.rows.map(sanitizeUser);
+    res.status(200).json({ users });
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -174,7 +222,7 @@ const getSingleUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.status(200).json({ user: result.rows[0] });
+    res.status(200).json({ user: sanitizeUser(result.rows[0]) });
   } catch (error) {
     console.error("Error fetching user:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -199,7 +247,7 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// Logout
+// Logout (stubbed - use token blacklist or cookie clearing in real apps)
 const logoutUser = (req, res) => {
   res.status(200).json({ message: "User logged out successfully" });
 };
@@ -220,7 +268,7 @@ const verifyUser = async (req, res) => {
   }
 };
 
-// Get new token
+// Get new access token by userId
 const getNewToken = async (req, res) => {
   const { userId } = req.body;
 
@@ -237,7 +285,7 @@ const getNewToken = async (req, res) => {
   }
 };
 
-// Refresh token (if using refresh tokens)
+// Refresh token (if you're storing refresh tokens)
 const getRefreshToken = async (req, res) => {
   const { refreshToken } = req.body;
 
