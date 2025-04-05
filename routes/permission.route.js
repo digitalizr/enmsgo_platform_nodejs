@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const {
   addPermissions,
-  getAllPermissionss,
+  getAllPermissions,
   getSinglePermissions,
   updatePermissions,
   deletePermissions,
@@ -10,7 +10,7 @@ const {
 
 router.post("/", addPermissions);
 
-router.get("/", getAllPermissionss);
+router.get("/", getAllPermissions);
 
 router.get("/:id", getSinglePermissions);
 

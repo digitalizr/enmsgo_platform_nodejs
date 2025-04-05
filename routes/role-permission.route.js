@@ -6,7 +6,7 @@ const {
     getSingleRolePermissions,
     updateRolePermissions,
     deleteRolePermissions,
-} = require("../controllers/roles-permissions.controller");
+} = require("../controllers/roles-permissions.controller.js");
 
 router.post("/", addRolePermissions);
 

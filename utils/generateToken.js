@@ -1,4 +1,4 @@
-import jwt  from "jsonwebtoken"
+const jwt  = require("jsonwebtoken")
 
 const generateToken = async (userId) => {
   try {
@@ -12,4 +12,5 @@ const generateToken = async (userId) => {
     throw new Error("Error while creating the token");
   }
 };
-export default generateToken;
+
+module.exports = generateToken

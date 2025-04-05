@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const {
   addUserCompany,
-  getAllUserCompanys,
+  getAllUserCompanies,
   getSingleUserCompany,
   updateUserCompany,
   deleteUserCompany,
@@ -10,7 +10,7 @@ const {
 
 router.post("/", addUserCompany);
 
-router.get("/", getAllUserCompanys);
+router.get("/", getAllUserCompanies);
 
 router.get("/:id", getSingleUserCompany);
 
