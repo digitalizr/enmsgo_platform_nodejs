@@ -4377,3 +4377,281 @@ app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
     })
   }
 })
+
+// User-level device assignment endpoints
+// Add these to your server.js file
+
+// Get all edge gateways assigned to a specific user
+app.get("/api/users/:userId/edge-gateways", authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if user exists
+    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [userId]);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Get edge gateways assigned to this user
+    const edgeGateways = await db.manyOrNone(`
+      SELECT uega.*, eg.serial_number, eg.status, eg.firmware_version, eg.last_seen,
+             dm.model_name, m.name as manufacturer_name,
+             c.name as company_name, f.name as facility_name, d.name as department_name
+      FROM user_edge_gateway_assignments uega
+      JOIN edge_gateways eg ON uega.edge_gateway_id = eg.id
+      JOIN device_models dm ON eg.model_id = dm.id
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      JOIN companies c ON uega.company_id = c.id
+      LEFT JOIN facilities f ON uega.facility_id = f.id
+      LEFT JOIN departments d ON uega.department_id = d.id
+      WHERE uega.user_id = $1
+      ORDER BY uega.created_at DESC
+    `, [userId]);
+    
+    return res.status(200).json({ data: edgeGateways });
+  } catch (error) {
+    console.error("Error fetching user edge gateways:", error);
+    return res.status(500).json({ message: "Server error fetching user edge gateways" });
+  }
+});
+
+// Get all smart meters assigned to a specific user
+app.get("/api/users/:userId/smart-meters", authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if user exists
+    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [userId]);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Get smart meters assigned to this user
+    const smartMeters = await db.manyOrNone(`
+      SELECT usma.*, sm.serial_number, sm.status, sm.firmware_version, sm.last_seen,
+             dm.model_name, m.name as manufacturer_name,
+             c.name as company_name, f.name as facility_name, d.name as department_name,
+             eg.serial_number as edge_gateway_serial
+      FROM user_smart_meter_assignments usma
+      JOIN smart_meters sm ON usma.smart_meter_id = sm.id
+      JOIN device_models dm ON sm.model_id = dm.id
+      JOIN manufacturers m ON dm.manufacturer_id = m.id
+      JOIN companies c ON usma.company_id = c.id
+      LEFT JOIN facilities f ON usma.facility_id = f.id
+      LEFT JOIN departments d ON usma.department_id = d.id
+      LEFT JOIN edge_gateways eg ON usma.edge_gateway_id = eg.id
+      WHERE usma.user_id = $1
+      ORDER BY usma.created_at DESC
+    `, [userId]);
+    
+    return res.status(200).json({ data: smartMeters });
+  } catch (error) {
+    console.error("Error fetching user smart meters:", error);
+    return res.status(500).json({ message: "Server error fetching user smart meters" });
+  }
+});
+
+// Assign edge gateway to a specific user
+app.post("/api/users/:userId/edge-gateways", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { edge_gateway_id, company_id, facility_id, department_id } = req.body;
+    
+    // Validate required fields
+    if (!edge_gateway_id || !company_id) {
+      return res.status(400).json({ message: "Edge gateway ID and company ID are required" });
+    }
+    
+    // Check if user exists
+    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [userId]);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Check if edge gateway exists and is available
+    const gateway = await db.oneOrNone("SELECT id, status FROM edge_gateways WHERE id = $1", [edge_gateway_id]);
+    if (!gateway) {
+      return res.status(404).json({ message: "Edge gateway not found" });
+    }
+    
+    if (gateway.status !== "available") {
+      return res.status(409).json({ message: "Edge gateway is not available for assignment" });
+    }
+    
+    // Check if company exists
+    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [company_id]);
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+    
+    // Start a transaction
+    return await db.tx(async (t) => {
+      // Create user-edge gateway assignment
+      const assignment = await t.one(`
+        INSERT INTO user_edge_gateway_assignments (
+          user_id, edge_gateway_id, company_id, facility_id, department_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+      `, [userId, edge_gateway_id, company_id, facility_id || null, department_id || null, req.user.id]);
+      
+      // Update edge gateway status
+      await t.none("UPDATE edge_gateways SET status = $1 WHERE id = $2", ["assigned", edge_gateway_id]);
+      
+      return res.status(201).json(assignment);
+    });
+  } catch (error) {
+    console.error("Error assigning edge gateway to user:", error);
+    return res.status(500).json({ message: "Server error assigning edge gateway to user" });
+  }
+});
+
+// Assign smart meter to a specific user
+app.post("/api/users/:userId/smart-meters", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { smart_meter_id, edge_gateway_id, company_id, facility_id, department_id } = req.body;
+    
+    // Validate required fields
+    if (!smart_meter_id || !company_id) {
+      return res.status(400).json({ message: "Smart meter ID and company ID are required" });
+    }
+    
+    // Check if user exists
+    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [userId]);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Check if smart meter exists and is available
+    const smartMeter = await db.oneOrNone("SELECT id, status FROM smart_meters WHERE id = $1", [smart_meter_id]);
+    if (!smartMeter) {
+      return res.status(404).json({ message: "Smart meter not found" });
+    }
+    
+    if (smartMeter.status !== "available") {
+      return res.status(409).json({ message: "Smart meter is not available for assignment" });
+    }
+    
+    // Check if company exists
+    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [company_id]);
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+    
+    // If edge gateway is provided, check if it exists and is assigned to the same user
+    if (edge_gateway_id) {
+      const gatewayAssignment = await db.oneOrNone(`
+        SELECT id FROM user_edge_gateway_assignments 
+        WHERE edge_gateway_id = $1 AND user_id = $2
+      `, [edge_gateway_id, userId]);
+      
+      if (!gatewayAssignment) {
+        return res.status(400).json({ 
+          message: "The specified edge gateway is not assigned to this user or does not exist" 
+        });
+      }
+    }
+    
+    // Start a transaction
+    return await db.tx(async (t) => {
+      // Create user-smart meter assignment
+      const assignment = await t.one(`
+        INSERT INTO user_smart_meter_assignments (
+          user_id, smart_meter_id, edge_gateway_id, company_id, facility_id, department_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+      `, [
+        userId, 
+        smart_meter_id, 
+        edge_gateway_id || null, 
+        company_id, 
+        facility_id || null, 
+        department_id || null, 
+        req.user.id
+      ]);
+      
+      // Update smart meter status
+      await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["assigned", smart_meter_id]);
+      
+      return res.status(201).json(assignment);
+    });
+  } catch (error) {
+    console.error("Error assigning smart meter to user:", error);
+    return res.status(500).json({ message: "Server error assigning smart meter to user" });
+  }
+});
+
+// Remove edge gateway assignment from a user
+app.delete("/api/users/:userId/edge-gateways/:gatewayId", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { userId, gatewayId } = req.params;
+    
+    // Check if assignment exists
+    const assignment = await db.oneOrNone(`
+      SELECT id FROM user_edge_gateway_assignments 
+      WHERE user_id = $1 AND edge_gateway_id = $2
+    `, [userId, gatewayId]);
+    
+    if (!assignment) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+    
+    // Start a transaction
+    return await db.tx(async (t) => {
+      // Get any smart meters assigned to this edge gateway and user
+      const smartMeterAssignments = await t.manyOrNone(`
+        SELECT id, smart_meter_id FROM user_smart_meter_assignments 
+        WHERE user_id = $1 AND edge_gateway_id = $2
+      `, [userId, gatewayId]);
+      
+      // Update smart meter assignments to remove edge gateway reference
+      for (const sma of smartMeterAssignments) {
+        await t.none(`
+          UPDATE user_smart_meter_assignments 
+          SET edge_gateway_id = NULL, updated_at = NOW(), updated_by = $1
+          WHERE id = $2
+        `, [req.user.id, sma.id]);
+      }
+      
+      // Delete edge gateway assignment
+      await t.none("DELETE FROM user_edge_gateway_assignments WHERE id = $1", [assignment.id]);
+      
+      // Update edge gateway status
+      await t.none("UPDATE edge_gateways SET status = $1 WHERE id = $2", ["available", gatewayId]);
+      
+      return res.status(200).json({ message: "Edge gateway assignment removed successfully" });
+    });
+  } catch (error) {
+    console.error("Error removing edge gateway assignment:", error);
+    return res.status(500).json({ message: "Server error removing edge gateway assignment" });
+  }
+});
+
+// Remove smart meter assignment from a user
+app.delete("/api/users/:userId/smart-meters/:meterId", authenticateToken, checkRole(["admin", "operator"]), async (req, res) => {
+  try {
+    const { userId, meterId } = req.params;
+    
+    // Check if assignment exists
+    const assignment = await db.oneOrNone(`
+      SELECT id FROM user_smart_meter_assignments 
+      WHERE user_id = $1 AND smart_meter_id = $2
+    `, [userId, meterId]);
+    
+    if (!assignment) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+    
+    // Start a transaction
+    return await db.tx(async (t) => {
+      // Delete smart meter assignment
+      await t.none("DELETE FROM user_smart_meter_assignments WHERE id = $1", [assignment.id]);
+      
+      // Update smart meter status
+      await t.none("UPDATE smart_meters SET status = $1 WHERE id = $2", ["available", meterId]);
+      
+      return res.status(200).json({ message: "Smart meter assignment removed successfully" });
+    });
+  } catch (error) {
+    console.error("Error removing smart meter assignment:", error);
+    return res.status(500).json({ message: "Server error removing smart meter assignment" });
+  }
+});
