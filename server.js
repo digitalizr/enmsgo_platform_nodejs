@@ -1793,41 +1793,6 @@ app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res)
   }
 });
 
-app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
-  try {
-    const { id } = req.params
-    const { email, first_name, last_name, role, status } = req.body
-
-    // Check if user exists
-    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [id])
-    if (!user) {
-      return res.status(404).json({ message: "User not found" })
-    }
-
-    // Update user
-    const updatedUser = await db.one(
-      `
-      UPDATE users SET
-        email = $1,
-        first_name = $2,
-        last_name = $3,
-        role = $4,
-        status = $5,
-        updated_at = NOW(),
-        updated_by = $6
-      WHERE id = $7
-      RETURNING id, email, first_name, last_name, role, status
-    `,
-      [email, first_name, last_name, role, status, req.user.id, id],
-    )
-
-    return res.status(200).json(updatedUser)
-  } catch (error) {
-    console.error("Error updating user:", error)
-    return res.status(500).json({ message: "Server error updating user" })
-  }
-})
-
 app.delete("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params
