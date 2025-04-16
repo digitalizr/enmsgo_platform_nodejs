@@ -31,16 +31,13 @@ app.use(
   }),
 )
 app.use(express.json()) // Parse JSON bodies
+
 app.use(morgan("dev")) // Logging
 
-// Rate limiting
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-})
-app.use("/api/", apiLimiter)
+
+// Add rate limiting configuration before defining routes
+// Create a rate limiter for general API endpoints
+
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -65,6 +62,66 @@ const authenticateToken = (req, res, next) => {
   })
 }
 
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  keyGenerator: (req) => {
+    // Use user ID if available, otherwise use IP
+    return req.user?.id || req.ip;
+  },
+  skip: (req) => {
+    // Skip rate limiting for certain paths that don't need it
+    const skipPaths = ['/api/auth/login', '/api/auth/register'];
+    return skipPaths.includes(req.path);
+  }
+});
+
+// Create a more lenient limiter for user company relationships
+// These are the endpoints causing the 429s
+const userCompanyLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // Limit each IP/user to 20 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests for user company data, please try again after a minute',
+  keyGenerator: (req) => {
+    return req.user?.id || req.ip;
+  }
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
+
+// Apply the specific rate limiter to the user-companies endpoint
+app.use('/api/user-companies', userCompanyLimiter);
+
+// Add a route to check rate limit status - helpful for debugging
+app.get('/api/rate-limit-status', authenticateToken, (req, res) => {
+  const userOrIp = req.user?.id || req.ip;
+  const apiLimitInfo = apiLimiter.store.hits[userOrIp] || { current: 0, limit: apiLimiter.max };
+  const userCompanyLimitInfo = userCompanyLimiter.store.hits[userOrIp] || { current: 0, limit: userCompanyLimiter.max };
+  
+  res.json({
+    apiLimit: {
+      current: apiLimitInfo.current,
+      limit: apiLimitInfo.limit,
+      remaining: apiLimitInfo.limit - apiLimitInfo.current,
+      resetTime: new Date(Date.now() + apiLimiter.windowMs)
+    },
+    userCompanyLimit: {
+      current: userCompanyLimitInfo.current,
+      limit: userCompanyLimitInfo.limit, 
+      remaining: userCompanyLimitInfo.limit - userCompanyLimitInfo.current,
+      resetTime: new Date(Date.now() + userCompanyLimiter.windowMs)
+    }
+  });
+});
+
+
 // Check if user has required role
 const checkRole = (roles) => {
   return (req, res, next) => {
@@ -74,26 +131,37 @@ const checkRole = (roles) => {
       userRole: req.user.role,
       userRoleId: req.user.role_id,
       requiredRoles: roles,
-    }) // Debug log
+    })
 
-    // Check if user has one of the required roles
-    // Check both role name and role_id
-    const hasRequiredRole =
-      // Check by role name if available
-      (req.user.role && roles.includes(req.user.role.toLowerCase())) ||
-      // Check by role_id if available
-      (req.user.role_id && roles.includes(req.user.role_id)) ||
-      // Check admin role_id specifically
-      req.user.role_id === "615b2efa-ea1b-44b5-8753-04dc5cf29b84" ||
-      // Check if user is an admin by role name
-      (req.user.role && req.user.role.toLowerCase() === "admin")
-
-    if (!hasRequiredRole) {
-      console.log("Access denied for user:", req.user) // Debug log
-      return res.status(403).json({ message: "Access denied: Insufficient permissions" })
-    }
-
-    next()
+    // Get role name if we have role_id but no role name
+    const rolePromise = req.user.role_id && !req.user.role 
+      ? db.oneOrNone("SELECT name FROM roles WHERE id = $1", [req.user.role_id])
+      : Promise.resolve(null);
+      
+    rolePromise.then(roleResult => {
+      const roleName = roleResult ? roleResult.name.toLowerCase() : null;
+      
+      // Check various ways to determine role
+      const hasRequiredRole = 
+        // Check by role name if available in token
+        (req.user.role && roles.includes(req.user.role.toLowerCase())) ||
+        // Check by role name from DB lookup
+        (roleName && roles.includes(roleName)) ||
+        // Check by role_id if it matches admin UUID
+        (req.user.role_id === "615b2efa-ea1b-44b5-8753-04dc5cf29b84") ||
+        // Special case for admin role by name
+        (req.user.role && req.user.role.toLowerCase() === "admin");
+      
+      if (!hasRequiredRole) {
+        console.log("Access denied for user:", req.user)
+        return res.status(403).json({ message: "Access denied: Insufficient permissions" })
+      }
+      
+      next()
+    }).catch(error => {
+      console.error("Error checking role:", error);
+      return res.status(500).json({ message: "Error checking permissions" });
+    });
   }
 }
 
@@ -3062,441 +3130,6 @@ app.get("/api/roles", authenticateToken, async (req, res) => {
 })
 
 // Update the POST /api/users route to handle role_id instead of role
-app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
-  try {
-    console.log("Creating user with data:", JSON.stringify(req.body))
-    const { email, password, first_name, last_name, role_id, is_active, require_password_change } = req.body
-
-    // Validate required fields
-    if (!email || !password || !first_name || !last_name || !role_id) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        error: "Email, password, first_name, last_name, and role_id are required",
-      })
-    }
-
-    // Check if email already exists
-    const existingUser = await db.oneOrNone("SELECT id FROM users WHERE email = $1", [email])
-    if (existingUser) {
-      return res.status(409).json({
-        message: "User with this email already exists",
-        error: "Email already in use",
-      })
-    }
-
-    // Check if role exists
-    const roleExists = await db.oneOrNone("SELECT id FROM roles WHERE id = $1", [role_id])
-    if (!roleExists) {
-      return res.status(400).json({
-        message: "Invalid role_id",
-        error: "The specified role_id does not exist",
-      })
-    }
-
-    // Hash password
-    const salt = await bcrypt.genSalt(10)
-    const hashedPassword = await bcrypt.hash(password, salt)
-
-    // Insert new user
-    const newUser = await db.one(
-      `
-      INSERT INTO users (
-        email, password_hash, first_name, last_name, role_id, is_active, 
-        require_password_change, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, email, first_name, last_name, role_id, is_active
-      `,
-      [
-        email,
-        hashedPassword,
-        first_name,
-        last_name,
-        role_id,
-        is_active !== undefined ? is_active : true,
-        require_password_change !== undefined ? require_password_change : true,
-        req.user.id,
-      ],
-    )
-
-    console.log("User created successfully:", newUser)
-    return res.status(201).json(newUser)
-  } catch (error) {
-    console.error("Error creating user:", error)
-    return res.status(500).json({
-      message: "Server error creating user",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-// Update the PUT /api/users/:id route to handle role_id instead of role
-app.put("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req, res) => {
-  try {
-    const { id } = req.params
-    console.log(`Updating user with ID ${id} with data:`, JSON.stringify(req.body))
-    const { email, first_name, last_name, role_id, is_active, phone } = req.body
-
-    // Validate required fields
-    if (!email || !first_name || !last_name || !role_id) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        error: "Email, first_name, last_name, and role_id are required",
-      })
-    }
-
-    // Check if user exists
-    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [id])
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-        error: "The specified user does not exist",
-      })
-    }
-
-    // Check if role exists
-    const roleExists = await db.oneOrNone("SELECT id FROM roles WHERE id = $1", [role_id])
-    if (!roleExists) {
-      return res.status(400).json({
-        message: "Invalid role_id",
-        error: "The specified role_id does not exist",
-      })
-    }
-
-    // Update user
-    const updatedUser = await db.one(
-      `
-      UPDATE users SET
-        email = $1,
-        first_name = $2,
-        last_name = $3,
-        role_id = $4,
-        is_active = $5,
-        phone = $6,
-        updated_at = NOW(),
-        updated_by = $7
-      WHERE id = $8
-      RETURNING id, email, first_name, last_name, role_id, is_active, phone
-      `,
-      [email, first_name, last_name, role_id, is_active, phone, req.user.id, id],
-    )
-
-    console.log("User updated successfully:", updatedUser)
-    return res.status(200).json(updatedUser)
-  } catch (error) {
-    console.error("Error updating user:", error)
-    return res.status(500).json({
-      message: "Server error updating user",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-// Update the GET /api/users route to include role information
-app.get("/api/users", authenticateToken, async (req, res) => {
-  try {
-    console.log("Fetching all users with company relationships")
-
-    // Get users with role information
-    const users = await db.manyOrNone(`
-      SELECT u.id, u.email, u.first_name, u.last_name, 
-             r.id as role_id, r.name as role, 
-             u.is_active, u.created_at, u.updated_at, 
-             u.require_password_change, u.last_login, u.phone
-      FROM users u
-      LEFT JOIN roles r ON u.role_id = r.id
-      ORDER BY u.created_at DESC
-    `)
-
-    console.log(`Found ${users.length} users`)
-
-    // For each user, get their company relationships
-    const formattedUsers = await Promise.all(
-      users.map(async (user) => {
-        try {
-          // Get primary company relationship
-          const relationshipQuery = `
-          SELECT uc.company_id, uc.facility_id, uc.department_id,
-                 c.name as company_name,
-                 f.name as facility_name,
-                 d.name as department_name
-          FROM user_companies uc
-          LEFT JOIN companies c ON uc.company_id = c.id
-          LEFT JOIN facilities f ON uc.facility_id = f.id
-          LEFT JOIN departments d ON uc.department_id = d.id
-          WHERE uc.user_id = $1
-          ORDER BY uc.is_primary DESC
-          LIMIT 1
-        `
-
-          const relationship = await db.oneOrNone(relationshipQuery, [user.id])
-
-          return {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            role_id: user.role_id,
-            role: user.role,
-            is_active: user.is_active,
-            phone: user.phone,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-            require_password_change: user.require_password_change,
-            last_login_at: user.last_login,
-            company:
-              relationship && relationship.company_id
-                ? {
-                    id: relationship.company_id,
-                    name: relationship.company_name,
-                  }
-                : null,
-            facility:
-              relationship && relationship.facility_id
-                ? {
-                    id: relationship.facility_id,
-                    name: relationship.facility_name,
-                  }
-                : null,
-            department:
-              relationship && relationship.department_id
-                ? {
-                    id: relationship.department_id,
-                    name: relationship.department_name,
-                  }
-                : null,
-          }
-        } catch (error) {
-          console.error(`Error getting relationships for user ${user.id}:`, error)
-          // Return user without relationships
-          return {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            role_id: user.role_id,
-            role: user.role,
-            is_active: user.is_active,
-            phone: user.phone,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-            require_password_change: user.require_password_change,
-            last_login_at: user.last_login,
-            company: null,
-            facility: null,
-            department: null,
-          }
-        }
-      }),
-    )
-
-    console.log("Returning users with relationships")
-    return res.status(200).json({ data: formattedUsers })
-  } catch (error) {
-    console.error("Error fetching users:", error)
-    return res.status(500).json({
-      message: "Server error fetching users",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-// Add User-Company relationships endpoints
-app.post("/api/user-companies", authenticateToken, async (req, res) => {
-  try {
-    console.log("Creating user-company relationship with data:", JSON.stringify(req.body))
-    const { user_id, company_id, facility_id, department_id, is_primary } = req.body
-
-    // Validate required fields
-    if (!user_id || !company_id) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        error: "user_id and company_id are required",
-      })
-    }
-
-    // Check if user exists
-    const user = await db.oneOrNone("SELECT id FROM users WHERE id = $1", [user_id])
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-        error: "The specified user does not exist",
-      })
-    }
-
-    // Check if company exists
-    const company = await db.oneOrNone("SELECT id FROM companies WHERE id = $1", [company_id])
-    if (!company) {
-      return res.status(404).json({
-        message: "Company not found",
-        error: "The specified company does not exist",
-      })
-    }
-
-    // If facility_id is provided, check if it exists and belongs to the company
-    if (facility_id) {
-      const facility = await db.oneOrNone("SELECT id FROM facilities WHERE id = $1 AND company_id = $2", [
-        facility_id,
-        company_id,
-      ])
-
-      if (!facility) {
-        return res.status(400).json({
-          message: "Invalid facility",
-          error: "The facility does not exist or does not belong to the specified company",
-        })
-      }
-
-      // If department_id is provided, check if it exists and belongs to the facility
-      if (department_id) {
-        const department = await db.oneOrNone("SELECT id FROM departments WHERE id = $1 AND facility_id = $2", [
-          department_id,
-          facility_id,
-        ])
-
-        if (!department) {
-          return res.status(400).json({
-            message: "Invalid department",
-            error: "The department does not exist or does not belong to the specified facility",
-          })
-        }
-      }
-    }
-
-    // Check if relationship already exists
-    const existingRelationship = await db.oneOrNone(
-      "SELECT id FROM user_companies WHERE user_id = $1 AND company_id = $2",
-      [user_id, company_id],
-    )
-
-    if (existingRelationship) {
-      // Update existing relationship
-      console.log("Updating existing user-company relationship")
-      const updatedRelationship = await db.one(
-        `
-        UPDATE user_companies SET
-          facility_id = $1,
-          department_id = $2,
-          is_primary = $3,
-          updated_at = NOW()
-        WHERE user_id = $4 AND company_id = $5
-        RETURNING *
-        `,
-        [facility_id, department_id, is_primary || false, user_id, company_id],
-      )
-
-      console.log("User-company relationship updated successfully:", updatedRelationship)
-      return res.status(200).json(updatedRelationship)
-    }
-
-    // If is_primary is true, set all other relationships for this user to is_primary = false
-    if (is_primary) {
-      await db.none("UPDATE user_companies SET is_primary = FALSE WHERE user_id = $1", [user_id])
-    }
-
-    // Insert new relationship
-    const newRelationship = await db.one(
-      `
-      INSERT INTO user_companies (
-        user_id, company_id, facility_id, department_id, is_primary
-      ) VALUES ($1, $2, $3, $4, $5) RETURNING *
-      `,
-      [user_id, company_id, facility_id, department_id, is_primary || false],
-    )
-
-    console.log("User-company relationship created successfully:", newRelationship)
-    return res.status(201).json(newRelationship)
-  } catch (error) {
-    console.error("Error creating user-company relationship:", error)
-    return res.status(500).json({
-      message: "Server error creating user-company relationship",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-app.get("/api/user-companies/:userId", authenticateToken, async (req, res) => {
-  try {
-    const { userId } = req.params
-    console.log(`Fetching user-company relationships for user ${userId}`)
-
-    // Get relationships with company, facility, and department info
-    const relationships = await db.manyOrNone(
-      `
-      SELECT uc.*, 
-             c.id as company_id, c.name as company_name,
-             f.id as facility_id, f.name as facility_name,
-             d.id as department_id, d.name as department_name
-      FROM user_companies uc
-      JOIN companies c ON uc.company_id = c.id
-      LEFT JOIN facilities f ON uc.facility_id = f.id
-      LEFT JOIN departments d ON uc.department_id = d.id
-      WHERE uc.user_id = $1
-      ORDER BY uc.is_primary DESC
-      `,
-      [userId],
-    )
-
-    console.log(`Found ${relationships.length} relationships for user ${userId}`)
-
-    // Format the response
-    const formattedRelationships = relationships.map((rel) => ({
-      id: rel.id,
-      user_id: rel.user_id,
-      is_primary: rel.is_primary,
-      created_at: rel.created_at,
-      updated_at: rel.updated_at,
-      company: {
-        id: rel.company_id,
-        name: rel.company_name,
-      },
-      facility: rel.facility_id
-        ? {
-            id: rel.facility_id,
-            name: rel.facility_name,
-          }
-        : null,
-      department: rel.department_id
-        ? {
-            id: rel.department_id,
-            name: rel.department_name,
-          }
-        : null,
-    }))
-
-    return res.status(200).json({ data: formattedRelationships })
-  } catch (error) {
-    console.error("Error fetching user-company relationships:", error)
-    return res.status(500).json({
-      message: "Server error fetching user-company relationships",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-app.delete("/api/user-companies/:userId", authenticateToken, async (req, res) => {
-  try {
-    const { userId } = req.params
-    console.log(`Deleting user-company relationships for user ${userId}`)
-
-    // Delete all relationships for this user
-    await db.none("DELETE FROM user_companies WHERE user_id = $1", [userId])
-    console.log(`Deleted all relationships for user ${userId}`)
-
-    return res.status(200).json({
-      message: "User-company relationships deleted successfully",
-      success: true,
-    })
-  } catch (error) {
-    console.error("Error deleting user-company relationships:", error)
-    return res.status(500).json({
-      message: "Server error deleting user-company relationships",
-      error: error.message || "Unknown error",
-    })
-  }
-})
-
-// Update the POST /api/users route to handle role_id instead of role
-// Find the existing route and replace it with:
-
 app.post("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
   try {
     console.log("Creating user with data:", JSON.stringify(req.body))
